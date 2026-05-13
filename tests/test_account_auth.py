@@ -1,0 +1,135 @@
+"""Auth plumbing: signing path, headers, and documented error mapping."""
+
+import hashlib
+import hmac
+
+import httpx
+import pytest
+import respx
+
+from delta_exchange_mcp.client import DeltaClient, sign
+from delta_exchange_mcp.config import INDIA_TESTNET_REST, Config
+from delta_exchange_mcp.errors import DeltaApiError
+
+
+def _client_with_creds() -> DeltaClient:
+    cfg = Config(
+        env="india_testnet", base_url=INDIA_TESTNET_REST, api_key="k1", api_secret="s1"
+    )
+    return DeltaClient(cfg)
+
+
+def test_sign_matches_hmac_sha256_spec():
+    expected = hmac.new(b"s1", b"GET1600000000/v2/wallet/balances", hashlib.sha256).hexdigest()
+    assert sign("s1", "GET", "1600000000", "/v2/wallet/balances", "", "") == expected
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_authenticated_request_sends_signed_headers():
+    route = respx.get(f"{INDIA_TESTNET_REST}/wallet/balances").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": []})
+    )
+    client = _client_with_creds()
+    await client.get("/wallet/balances", auth=True)
+
+    assert route.called
+    req = route.calls[0].request
+    assert req.headers.get("api-key") == "k1"
+    assert req.headers.get("timestamp") is not None
+    sig = req.headers.get("signature")
+    assert sig and len(sig) == 64
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_signing_payload_includes_v2_prefix():
+    """Delta signs the FULL path including /v2 — see slate _authentication.md example."""
+    route = respx.get(f"{INDIA_TESTNET_REST}/wallet/balances").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": []})
+    )
+    client = _client_with_creds()
+    await client.get("/wallet/balances", auth=True)
+
+    req = route.calls[0].request
+    ts = req.headers["timestamp"]
+    expected_payload = f"GET{ts}/v2/wallet/balances"
+    expected_sig = hmac.new(b"s1", expected_payload.encode(), hashlib.sha256).hexdigest()
+    assert req.headers["signature"] == expected_sig
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_signing_payload_includes_query_string():
+    route = respx.get(f"{INDIA_TESTNET_REST}/orders").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": []})
+    )
+    client = _client_with_creds()
+    await client.get("/orders", params={"product_id": 1, "states": "open"}, auth=True)
+
+    req = route.calls[0].request
+    ts = req.headers["timestamp"]
+    qs = "?product_id=1&states=open"
+    expected_sig = hmac.new(
+        b"s1", f"GET{ts}/v2/orders{qs}".encode(), hashlib.sha256
+    ).hexdigest()
+    assert req.headers["signature"] == expected_sig
+
+
+@pytest.mark.asyncio
+async def test_auth_required_without_creds_raises():
+    cfg = Config(env="india_testnet", base_url=INDIA_TESTNET_REST)
+    client = DeltaClient(cfg)
+    with pytest.raises(DeltaApiError, match="credentials_missing"):
+        await client.get("/wallet/balances", auth=True)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_invalid_api_key_message_hints_env():
+    respx.get(f"{INDIA_TESTNET_REST}/wallet/balances").mock(
+        return_value=httpx.Response(
+            401, json={"success": False, "error": {"code": "InvalidApiKey"}}
+        )
+    )
+    client = _client_with_creds()
+    with pytest.raises(DeltaApiError) as exc:
+        await client.get("/wallet/balances", auth=True)
+    assert exc.value.code == "InvalidApiKey"
+    assert "DELTA_MCP_ENV" in str(exc.value)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_ip_not_whitelisted_includes_ip_in_message():
+    respx.get(f"{INDIA_TESTNET_REST}/wallet/balances").mock(
+        return_value=httpx.Response(
+            403,
+            json={
+                "success": False,
+                "error": {
+                    "code": "ip_not_whitelisted_for_api_key",
+                    "context": {"ip": "1.2.3.4"},
+                },
+            },
+        )
+    )
+    client = _client_with_creds()
+    with pytest.raises(DeltaApiError) as exc:
+        await client.get("/wallet/balances", auth=True)
+    assert "1.2.3.4" in str(exc.value)
+    assert "whitelist" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_signature_expired_message_hints_clock_sync():
+    respx.get(f"{INDIA_TESTNET_REST}/wallet/balances").mock(
+        return_value=httpx.Response(
+            401, json={"success": False, "error": {"code": "SignatureExpired"}}
+        )
+    )
+    client = _client_with_creds()
+    with pytest.raises(DeltaApiError) as exc:
+        await client.get("/wallet/balances", auth=True)
+    assert "clock" in str(exc.value).lower() or "ntp" in str(exc.value).lower()
