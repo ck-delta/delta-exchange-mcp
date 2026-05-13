@@ -24,12 +24,6 @@ The server runs **local stdio only**: your MCP client launches it as a subproces
 
 ## Install in your MCP client
 
-### Cursor (one click)
-
-[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=delta-exchange-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJnaXQraHR0cHM6Ly9naXRodWIuY29tL2RlbHRhLWV4Y2hhbmdlL2RlbHRhLWV4Y2hhbmdlLW1jcC5naXQiLCJkZWx0YS1leGNoYW5nZS1tY3AiXSwiZW52Ijp7IkRFTFRBX01DUF9FTlYiOiJpbmRpYV9wcm9kIn19)
-
-Opens Cursor with the server pre-filled. Add `DELTA_API_KEY` / `DELTA_API_SECRET` under `env` to enable the account tools.
-
 ### Claude Code
 
 ```bash
