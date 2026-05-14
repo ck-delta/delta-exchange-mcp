@@ -32,12 +32,12 @@ sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
 git diff pyproject.toml          # sanity check the diff
 
 # 3. Run tests + lint locally
-uv sync
+uv sync                          # regenerates uv.lock with the new workspace version
 uv run pytest
 uv run ruff check src tests scripts
 
 # 4. Commit + tag
-git add pyproject.toml
+git add pyproject.toml uv.lock   # uv.lock pins the workspace's own version; keep them in sync
 git commit -m "Release v$NEW_VERSION"
 git tag -a "v$NEW_VERSION" -m "v$NEW_VERSION"
 
