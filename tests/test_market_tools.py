@@ -76,6 +76,28 @@ async def _call_market_tool(client: DeltaClient, name: str, **kwargs: Any) -> An
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_get_settlement_prices_filters_states_expired(client: DeltaClient):
+    route = respx.get(f"{INDIA_TESTNET_REST}/products").mock(
+        return_value=httpx.Response(
+            200, json={"success": True, "result": [], "meta": {"after": None}}
+        )
+    )
+    await _call_market_tool(
+        client,
+        "get_settlement_prices",
+        contract_types=["call_options", "put_options"],
+        page_size=50,
+        after="cur",
+    )
+    url = str(route.calls[0].request.url)
+    assert "states=expired" in url
+    assert "contract_types=call_options%2Cput_options" in url
+    assert "page_size=50" in url
+    assert "after=cur" in url
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_get_indices_hits_indices_endpoint(client: DeltaClient):
     route = respx.get(f"{INDIA_TESTNET_REST}/indices").mock(
         return_value=httpx.Response(200, json={"success": True, "result": []})
