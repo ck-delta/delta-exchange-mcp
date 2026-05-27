@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -22,6 +23,83 @@ def _csv_ints(values: list[int] | None) -> str | None:
     return ",".join(str(v) for v in values)
 
 
+def _safe_export_path(output_path: str) -> Path:
+    """Resolve `output_path` and reject anything outside cwd or $HOME.
+
+    Guards against path-traversal and absolute writes to unexpected locations,
+    since this tool is the only one that writes to the user's disk.
+    """
+    raw = Path(output_path).expanduser()
+    resolved = (Path.cwd() / raw).resolve() if not raw.is_absolute() else raw.resolve()
+    cwd = Path.cwd().resolve()
+    home = Path.home().resolve()
+    if not (resolved.is_relative_to(cwd) or resolved.is_relative_to(home)):
+        raise ValueError(
+            f"output_path must be inside cwd ({cwd}) or home ({home}); got {resolved}"
+        )
+    return resolved
+
+
+_OPTION_CONTRACT_TYPES = {"call_options", "put_options"}
+
+
+def _is_option(pos: dict[str, Any]) -> bool:
+    ctype = pos.get("contract_type")
+    if not ctype and isinstance(pos.get("product"), dict):
+        ctype = pos["product"].get("contract_type")
+    if ctype in _OPTION_CONTRACT_TYPES:
+        return True
+    symbol = pos.get("product_symbol") or ""
+    return isinstance(symbol, str) and (symbol.startswith("C-") or symbol.startswith("P-"))
+
+
+def _lookup_contract_value(pos: dict[str, Any]) -> float | None:
+    raw = pos.get("contract_value")
+    if raw is None and isinstance(pos.get("product"), dict):
+        raw = pos["product"].get("contract_value")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _patch_short_option_pnl(result: Any) -> Any:
+    """Server returns unsigned `unrealized_pnl` (premium value) for short options.
+    Recompute the signed P&L for those positions; leave others untouched.
+
+    Reason: upstream bug — for short option positions the API returns
+    mark_price * |size| * contract_value (premium value), ignoring the position
+    direction. Futures and long options are unaffected. See GH #9.
+    """
+    if not isinstance(result, dict):
+        return result
+    positions = result.get("result")
+    if not isinstance(positions, list):
+        return result
+    for pos in positions:
+        if not isinstance(pos, dict) or not _is_option(pos):
+            continue
+        size_raw = pos.get("size")
+        try:
+            size = int(size_raw)
+        except (TypeError, ValueError):
+            continue
+        if size >= 0:
+            continue
+        try:
+            entry = float(pos["entry_price"])
+            mark = float(pos["mark_price"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        contract_value = _lookup_contract_value(pos)
+        if contract_value is None:
+            continue
+        pos["unrealized_pnl"] = str((mark - entry) * size * contract_value)
+    return result
+
+
 def register(mcp: FastMCP, client: DeltaClient) -> None:
     @mcp.tool()
     async def get_positions(
@@ -31,7 +109,12 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
             description="Underlying asset symbol (e.g. BTC) — returns all positions under it.",
         ),
     ) -> dict[str, Any]:
-        """Open position(s). Pass exactly one of product_id or underlying_asset_symbol."""
+        """Open position(s). Pass exactly one of product_id or underlying_asset_symbol.
+
+        Returns only `entry_price` and `size`. For `realized_pnl`, `realized_funding`,
+        `margin`, `mark_price`, `unrealized_pnl`, `liquidation_price` and other analytical
+        fields, call `get_margined_positions` instead.
+        """
         if (product_id is None) == (not underlying_asset_symbol):
             raise ValueError("pass exactly one of product_id or underlying_asset_symbol")
         return await client.get(
@@ -48,8 +131,26 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
             description="Subset of: perpetual_futures, call_options, put_options.",
         ),
     ) -> dict[str, Any]:
-        """All open margined positions, optionally filtered."""
-        return await client.get(
+        """All open margined positions, optionally filtered.
+
+        Computing notional exposure (especially for options):
+            notional_usd = abs(size) * contract_value * index_price
+
+        Use `index_price` (spot of the underlying), NOT `mark_price` — mark_price for an
+        option is the option premium, so multiplying by it gives the premium value, not the
+        underlying exposure. For a short BTC call with size 10, contract_value 0.001 and
+        BTC index 54_270, notional is 10 * 0.001 * 54_270 = $542.70, not the ~$7.60 you'd
+        get by multiplying the premium.
+
+        `size` is signed: positive = long, negative = short.
+
+        Note on `unrealized_pnl` for short options: the upstream API returns
+        the absolute premium value (unsigned) rather than the signed mark-to-market
+        P&L. This tool patches the field client-side using
+        (mark_price - entry_price) * size * contract_value, with `size` signed.
+        Long options and futures pass through unchanged. See GH #9.
+        """
+        result = await client.get(
             "/positions/margined",
             params={
                 "product_ids": _csv_ints(product_ids),
@@ -57,10 +158,19 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
             },
             auth=True,
         )
+        return _patch_short_option_pnl(result)
 
     @mcp.tool()
     async def get_wallet_balances() -> dict[str, Any]:
-        """Wallet balances across all assets. Fields: asset_symbol, balance, available_balance, position_margin."""
+        """Wallet balances across all assets.
+
+        Fields: asset_symbol, balance, available_balance, position_margin,
+        strategy_blocked_amount.
+
+        `strategy_blocked_amount` is collateral reserved by an active Algo Marketplace
+        strategy subscription. It is normal and expected — do not flag it as a risk or
+        anomaly. To release it, the user must stop or unsubscribe from the strategy.
+        """
         return await client.get("/wallet/balances", auth=True)
 
     @mcp.tool()
@@ -196,3 +306,52 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
     async def get_profile() -> dict[str, Any]:
         """User profile."""
         return await client.get("/profile", auth=True)
+
+    @mcp.tool()
+    async def bulk_fills_export(
+        output_path: str = Field(
+            description=(
+                "Where to write the CSV. Must be inside the current working directory or "
+                "the user's home directory; ~ is expanded."
+            )
+        ),
+        start_time_us: int | None = Field(
+            default=None, description="Window start in microseconds epoch."
+        ),
+        end_time_us: int | None = Field(
+            default=None, description="Window end in microseconds epoch."
+        ),
+        product_ids: list[int] | None = None,
+        contract_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Bulk-export your fills to a CSV file on disk.
+
+        Use this for full-history analysis, tax reports, or backtesting against your
+        own trade record — anything where the paginated `get_fills` would require
+        dozens of round-trips. Calls `/fills/history/download/csv` and writes the
+        raw CSV to `output_path`. Returns `{path, row_count, size_bytes}`.
+
+        The output path is restricted to the current working directory or the user's
+        home directory to keep the write scope predictable.
+        """
+        resolved = _safe_export_path(output_path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        data = await client.get_raw(
+            "/fills/history/download/csv",
+            params={
+                "product_ids": _csv_ints(product_ids),
+                "contract_types": _csv(contract_types),
+                "start_time": start_time_us,
+                "end_time": end_time_us,
+            },
+            auth=True,
+        )
+        resolved.write_bytes(data)
+        # Row count = newline-delimited rows minus header. Be lenient if the response
+        # is empty or missing a trailing newline.
+        row_count = max(0, data.count(b"\n") - 1) if data else 0
+        return {
+            "path": str(resolved),
+            "row_count": row_count,
+            "size_bytes": len(data),
+        }
