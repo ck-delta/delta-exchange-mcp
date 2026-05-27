@@ -21,7 +21,7 @@ Sanity-check the install:
 uvx delta-exchange-mcp --help
 ```
 
-The server runs **local stdio only**: your MCP client launches it as a subprocess, and your API keys never leave your machine. `uvx` resolves the latest published version from PyPI on each launch. To pin a specific version, use `uvx "delta-exchange-mcp==0.1.0"`.
+The server runs **local stdio only**: your MCP client launches it as a subprocess, and your API keys never leave your machine. `uvx` resolves the latest published version from PyPI on each launch. To pin a specific version, use `uvx "delta-exchange-mcp==0.2.0"`.
 
 ## Install in your MCP client
 
@@ -235,7 +235,20 @@ claude mcp add delta-exchange-mcp-dev \
 
 Register the dev server under a separate name (e.g. `delta-exchange-mcp-dev`) so it doesn't collide with the PyPI install. The git+URL form rebuilds from source on each launch and is meant for testing unreleased changes — stick with `uvx delta-exchange-mcp` for everyday use.
 
-## API keys (optional, for account tools)
+## Updating
+
+`uvx` caches the resolved package, so a new PyPI release isn't picked up automatically. To move to the latest version:
+
+1. **If your config pins a version** (`uvx "delta-exchange-mcp==0.1.1"`), bump the pin to the new version, or drop it to float to latest.
+2. **Refresh the `uvx` cache** so it fetches the new build:
+
+   ```bash
+   uvx --refresh delta-exchange-mcp --help
+   ```
+
+3. **Reload the server** so your client respawns the process — in Claude Code, run `/mcp` and reconnect `delta-exchange-mcp`, or restart the client. Other clients: restart the app.
+
+New tools appear only after the respawn. The MCP `list_changed` notification refreshes the tool list of an already-running server; it does **not** swap the underlying package version, which always requires a restart.
 
 1. Create a key at [delta.exchange/app/account/manageapikeys](https://www.delta.exchange/app/account/manageapikeys) (testnet: [demo.delta.exchange](https://demo.delta.exchange/app/account/manageapikeys)).
 2. Both `api_key` and `api_secret` are shown **once at creation**. Save the secret immediately; it can't be re-derived.
