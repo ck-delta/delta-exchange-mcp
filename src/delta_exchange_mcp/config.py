@@ -17,12 +17,16 @@ BASE_URLS: dict[str, str] = {
 DEFAULT_ENV = "india_prod"
 
 
+TRUTHY = {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Config:
     env: Env
     base_url: str
     api_key: str | None = None
     api_secret: str | None = None
+    debug: bool = False
 
     @property
     def has_credentials(self) -> bool:
@@ -41,4 +45,5 @@ def load() -> Config:
         base_url=BASE_URLS[env],
         api_key=os.environ.get("DELTA_API_KEY") or None,
         api_secret=os.environ.get("DELTA_API_SECRET") or None,
+        debug=os.environ.get("DELTA_MCP_DEBUG", "").strip().lower() in TRUTHY,
     )
