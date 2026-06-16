@@ -62,6 +62,28 @@ async def test_logs_request_and_body_but_no_secrets(tmp_path, monkeypatch):
     assert signature not in text
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_logs_csv_body_for_raw_text_response(tmp_path, monkeypatch):
+    log_file = tmp_path / "d.log"
+    monkeypatch.setenv("DELTA_MCP_DEBUG_FILE", str(log_file))
+    cfg = _cfg(tmp_path, api_key="k", api_secret="s", debug=True)
+    debug_log.configure(cfg)
+
+    csv_body = b"Time,Contract,Side\n2026-01-01,BTCUSD,buy\n"
+    respx.get(f"{INDIA_TESTNET_REST}/fills/history/download/csv").mock(
+        return_value=httpx.Response(200, content=csv_body, headers={"content-type": "text/csv"})
+    )
+    client = DeltaClient(cfg)
+    await client.get_raw("/fills/history/download/csv", auth=True)
+    await client.aclose()
+
+    for h in logging.getLogger("delta_exchange_mcp").handlers:
+        h.flush()
+    text = log_file.read_text()
+    assert "Time,Contract,Side" in text  # raw CSV body captured, not just byte count
+
+
 def test_debug_off_returns_none(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_MCP_DEBUG_FILE", str(tmp_path / "d.log"))
     assert debug_log.configure(_cfg(tmp_path, debug=False)) is None

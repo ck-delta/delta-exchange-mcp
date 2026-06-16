@@ -41,6 +41,7 @@ def main() -> None:
     banner = f"[delta-exchange-mcp] stdio env={cfg.env} base_url={cfg.base_url} surface={surface}"
     if cfg.debug:
         log_path = debug_log.configure(cfg)  # idempotent — returns the same path
-        banner += f" debug=on log={log_path}"
+        if log_path is not None:  # configure returns None if the log file can't be opened
+            banner += f" debug=on log={log_path}"
     print(banner, file=sys.stderr)
     mcp.run()

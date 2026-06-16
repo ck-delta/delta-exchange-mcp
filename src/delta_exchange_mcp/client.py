@@ -119,11 +119,20 @@ class DeltaClient:
                 continue
 
             if raw:
-                logger.info(
-                    "← %s %s %s content-type=%s bytes=%s",
-                    method, path, resp.status_code,
-                    resp.headers.get("content-type", ""), len(resp.content),
-                )
+                ctype = resp.headers.get("content-type", "")
+                # Log a capped textual body for text/CSV/JSON so a bad export (e.g. the
+                # /fills/history/download/csv account export) leaves usable wire evidence;
+                # only fall back to byte-count for genuinely binary payloads.
+                if any(t in ctype.lower() for t in ("text", "csv", "json")):
+                    logger.info(
+                        "← %s %s %s content-type=%s body=%s",
+                        method, path, resp.status_code, ctype, resp.text[:_BODY_LOG_CAP],
+                    )
+                else:
+                    logger.info(
+                        "← %s %s %s content-type=%s bytes=%s",
+                        method, path, resp.status_code, ctype, len(resp.content),
+                    )
             else:
                 logger.info(
                     "← %s %s %s body=%s", method, path, resp.status_code, resp.text[:_BODY_LOG_CAP]
