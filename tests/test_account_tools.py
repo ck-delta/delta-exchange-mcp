@@ -91,6 +91,56 @@ async def test_get_wallet_transactions_csv_and_pagination():
     assert "after=cur" in url
 
 
+# --- GH #18: default ~90-day window notice -------------------------------
+
+
+def _structured(result: Any) -> Any:
+    return result[1] if isinstance(result, tuple) else result
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_wallet_transactions_notice_when_start_time_omitted():
+    respx.get(f"{INDIA_TESTNET_REST}/wallet/transactions").mock(
+        return_value=_ok({"success": True, "result": [], "meta": {"total_count": 0}})
+    )
+    result = await _call_tool("get_wallet_transactions", transaction_types=["deposit"])
+    assert "~90 days" in _structured(result)["notice"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_wallet_transactions_no_notice_when_start_time_given():
+    respx.get(f"{INDIA_TESTNET_REST}/wallet/transactions").mock(
+        return_value=_ok({"success": True, "result": [], "meta": {"total_count": 0}})
+    )
+    result = await _call_tool("get_wallet_transactions", start_time_us=1000)
+    assert "notice" not in _structured(result)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_fills_notice_when_start_time_omitted():
+    respx.get(f"{INDIA_TESTNET_REST}/fills").mock(return_value=_ok())
+    result = await _call_tool("get_fills")
+    assert "notice" in _structured(result)
+    result2 = await _call_tool("get_fills", start_time_us=1000)
+    assert "notice" not in _structured(result2)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_bulk_fills_export_notice_when_start_time_omitted(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    respx.get(f"{INDIA_TESTNET_REST}/fills/history/download/csv").mock(
+        return_value=httpx.Response(200, content=b"a,b\n1,2\n", headers={"content-type": "text/csv"})
+    )
+    result = await _call_tool("bulk_fills_export", output_path="fills.csv")
+    structured = _structured(result)
+    assert "notice" in structured
+    assert structured["row_count"] == 1  # notice doesn't disturb the real fields
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_get_positions_requires_one_param():
