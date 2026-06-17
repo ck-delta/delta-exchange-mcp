@@ -11,6 +11,25 @@ from pydantic import Field
 from delta_exchange_mcp.client import DeltaClient
 
 
+_RECENT_WINDOW_NOTICE = (
+    "No start_time_us was given, so the API returned only its default recent window "
+    "(~90 days). Older records are NOT included. To get full history, call again with "
+    "an explicit start_time_us (microseconds epoch)."
+)
+
+
+def _annotate_default_window(result: dict[str, Any], start_time_us: int | None) -> dict[str, Any]:
+    """Flag results that silently used the API's ~90-day default window.
+
+    When the caller omits start_time_us the upstream API only returns the last ~90 days, so a
+    short/empty result must not be read as "nothing exists" (see GH #18). Mutates only dict
+    responses; no-op when start_time_us was provided.
+    """
+    if start_time_us is None and isinstance(result, dict):
+        result["notice"] = _RECENT_WINDOW_NOTICE
+    return result
+
+
 def _csv(values: list[str] | None) -> str | None:
     if not values:
         return None
@@ -178,16 +197,31 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
         asset_ids: list[int] | None = Field(default=None, description="Filter by asset ids."),
         transaction_types: list[str] | None = Field(
             default=None,
-            description="Filter by transaction type (e.g. deposit, withdrawal, funding, settlement, commission).",
+            description=(
+                "Filter by transaction type (e.g. deposit, withdrawal, funding, settlement, "
+                "commission). Note: sparse/older types like deposit and liquidation_fee may sit "
+                "outside the default ~90-day window — pass start_time_us to find them."
+            ),
         ),
-        start_time_us: int | None = Field(default=None, description="Microseconds epoch."),
+        start_time_us: int | None = Field(
+            default=None,
+            description=(
+                "Window start, microseconds epoch. If omitted the API returns only the last "
+                "~90 days; set this to reach older history."
+            ),
+        ),
         end_time_us: int | None = None,
         page_size: int = Field(default=50, ge=1, le=200),
         after: str | None = None,
         before: str | None = None,
     ) -> dict[str, Any]:
-        """Wallet transaction history. Paginated. Timestamps are microseconds."""
-        return await client.get(
+        """Wallet transaction history. Paginated. Timestamps are microseconds.
+
+        If start_time_us is omitted the API returns only the last ~90 days — pass start_time_us
+        for older/full history (e.g. all deposits, tax/reconciliation). When omitted, the result
+        carries a `notice` field saying so.
+        """
+        result = await client.get(
             "/wallet/transactions",
             params={
                 "asset_ids": _csv_ints(asset_ids),
@@ -200,18 +234,29 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
             },
             auth=True,
         )
+        return _annotate_default_window(result, start_time_us)
 
     @mcp.tool()
     async def get_fills(
         product_ids: list[int] | None = None,
         contract_types: list[str] | None = None,
-        start_time_us: int | None = Field(default=None, description="Microseconds epoch."),
+        start_time_us: int | None = Field(
+            default=None,
+            description=(
+                "Window start, microseconds epoch. If omitted the API returns only the last "
+                "~90 days; set this to reach older fills."
+            ),
+        ),
         end_time_us: int | None = None,
         page_size: int = Field(default=50, ge=1, le=200),
         after: str | None = None,
     ) -> dict[str, Any]:
-        """Your trade fills (executed trades). Paginated. Timestamps are microseconds."""
-        return await client.get(
+        """Your trade fills (executed trades). Paginated. Timestamps are microseconds.
+
+        If start_time_us is omitted the API returns only the last ~90 days — pass start_time_us
+        for older/full history. When omitted, the result carries a `notice` field saying so.
+        """
+        result = await client.get(
             "/fills",
             params={
                 "product_ids": _csv_ints(product_ids),
@@ -223,6 +268,7 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
             },
             auth=True,
         )
+        return _annotate_default_window(result, start_time_us)
 
     @mcp.tool()
     async def get_open_orders(
@@ -331,6 +377,10 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
         dozens of round-trips. Calls `/fills/history/download/csv` and writes the
         raw CSV to `output_path`. Returns `{path, row_count, size_bytes}`.
 
+        IMPORTANT: if start_time_us is omitted the API exports only the last ~90 days —
+        a tax/full-history export MUST pass start_time_us (and usually end_time_us) or it
+        will silently miss older trades. When omitted, the result carries a `notice` field.
+
         The output path is restricted to the current working directory or the user's
         home directory to keep the write scope predictable.
         """
@@ -350,8 +400,11 @@ def register(mcp: FastMCP, client: DeltaClient) -> None:
         # Row count = newline-delimited rows minus header. Be lenient if the response
         # is empty or missing a trailing newline.
         row_count = max(0, data.count(b"\n") - 1) if data else 0
-        return {
-            "path": str(resolved),
-            "row_count": row_count,
-            "size_bytes": len(data),
-        }
+        return _annotate_default_window(
+            {
+                "path": str(resolved),
+                "row_count": row_count,
+                "size_bytes": len(data),
+            },
+            start_time_us,
+        )

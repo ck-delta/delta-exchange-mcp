@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import time
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
@@ -12,6 +13,11 @@ import httpx
 
 from delta_exchange_mcp.config import Config
 from delta_exchange_mcp.errors import DeltaApiError
+
+logger = logging.getLogger("delta_exchange_mcp")
+
+# Cap on how much of a response body we log, so a huge paginated payload can't bloat the file.
+_BODY_LOG_CAP = 50_000
 
 try:
     USER_AGENT = f"delta-exchange-mcp/{version('delta-exchange-mcp')}"
@@ -88,6 +94,10 @@ class DeltaClient:
             headers["signature"] = signature
             headers["timestamp"] = ts
 
+        logger.info(
+            "→ %s %s params=%s auth=%s", method, f"{self._base_path}{path}", filtered_params, auth
+        )
+
         last_error: Exception | None = None
         for attempt in range(3):
             try:
@@ -108,7 +118,30 @@ class DeltaClient:
                 await asyncio.sleep(0.5 * (2**attempt))
                 continue
 
-            return self._unwrap_raw(resp) if raw else self._unwrap(resp)
+            if raw:
+                ctype = resp.headers.get("content-type", "")
+                # Log a capped textual body for text/CSV/JSON so a bad export (e.g. the
+                # /fills/history/download/csv account export) leaves usable wire evidence;
+                # only fall back to byte-count for genuinely binary payloads.
+                if any(t in ctype.lower() for t in ("text", "csv", "json")):
+                    logger.info(
+                        "← %s %s %s content-type=%s body=%s",
+                        method, path, resp.status_code, ctype, resp.text[:_BODY_LOG_CAP],
+                    )
+                else:
+                    logger.info(
+                        "← %s %s %s content-type=%s bytes=%s",
+                        method, path, resp.status_code, ctype, len(resp.content),
+                    )
+            else:
+                logger.info(
+                    "← %s %s %s body=%s", method, path, resp.status_code, resp.text[:_BODY_LOG_CAP]
+                )
+            try:
+                return self._unwrap_raw(resp) if raw else self._unwrap(resp)
+            except DeltaApiError as e:
+                logger.info("✗ %s %s code=%s status=%s", method, path, e.code, e.status)
+                raise
 
         assert last_error is not None
         raise last_error
