@@ -36,15 +36,27 @@ def _resolve_path() -> Path:
     return Path.home() / ".delta-exchange-mcp" / "logs" / name
 
 
+def _make_handler(path: Path) -> logging.FileHandler:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(path, encoding="utf-8")
+    # Owner read/write only — the log may contain account data (balances, fills,
+    # transactions). FileHandler creates the file empty under the process umask
+    # (often 644), so tighten before any body is written. Best-effort: no-op on
+    # platforms without POSIX permissions (e.g. Windows).
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return handler
+
+
 def _open_handler(path: Path) -> tuple[logging.FileHandler, Path]:
     """Create the dir and a FileHandler, falling back to a tempdir on OSError."""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return logging.FileHandler(path, encoding="utf-8"), path
+        return _make_handler(path), path
     except OSError:
         fallback = Path(tempfile.gettempdir()) / "delta-exchange-mcp" / path.name
-        fallback.parent.mkdir(parents=True, exist_ok=True)
-        return logging.FileHandler(fallback, encoding="utf-8"), fallback
+        return _make_handler(fallback), fallback
 
 
 def configure(cfg: Config) -> Path | None:

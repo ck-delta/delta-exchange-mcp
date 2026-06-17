@@ -88,3 +88,15 @@ def test_debug_off_returns_none(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_MCP_DEBUG_FILE", str(tmp_path / "d.log"))
     assert debug_log.configure(_cfg(tmp_path, debug=False)) is None
     assert not (tmp_path / "d.log").exists()
+
+
+def test_log_file_is_owner_only(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    if os.name == "nt":
+        pytest.skip("no POSIX file permissions on Windows")
+    log_file = tmp_path / "d.log"
+    monkeypatch.setenv("DELTA_MCP_DEBUG_FILE", str(log_file))
+    debug_log.configure(_cfg(tmp_path, api_key="k", api_secret="s", debug=True))
+    assert stat.S_IMODE(log_file.stat().st_mode) == 0o600
