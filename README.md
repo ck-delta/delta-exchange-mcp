@@ -263,6 +263,32 @@ New tools appear only after the respawn. The MCP `list_changed` notification ref
 | `DELTA_MCP_ENV` | `india_prod` | `india_prod` or `india_testnet`. |
 | `DELTA_API_KEY` | _(unset)_ | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
 | `DELTA_API_SECRET` | _(unset)_ | API secret matching `DELTA_API_KEY`. |
+| `DELTA_MCP_DEBUG` | _(unset)_ | `1`/`true`/`yes`/`on` writes HTTP request URLs and response bodies to a log file (see [Debugging](#debugging--reporting-a-bug)). |
+| `DELTA_MCP_DEBUG_FILE` | _(auto)_ | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
+
+## Debugging / reporting a bug
+
+To capture exactly what the server sends and receives — useful when a tool returns
+something unexpected — set `DELTA_MCP_DEBUG=1` in your MCP client config:
+
+```jsonc
+"delta-exchange": {
+  "command": "uvx",
+  "args": ["delta-exchange-mcp"],
+  "env": {
+    "DELTA_MCP_ENV": "india_prod",
+    "DELTA_MCP_DEBUG": "1"
+  }
+}
+```
+
+Restart the client and re-run the action. Each HTTP call (request URL incl. filter params +
+response body + status) is logged to `~/.delta-exchange-mcp/logs/`. The exact path is printed
+on startup and you can also just **ask the assistant: _"where is the debug log?"_** (the
+`get_debug_status` tool returns it).
+
+> The log **never** contains your API key, secret, or request signatures — but response bodies
+> **do** contain your account data (balances, positions, transactions). **Review before sharing.**
 
 ## Tools
 

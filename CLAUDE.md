@@ -61,6 +61,19 @@ Each tool module exposes `register(mcp: FastMCP, client: DeltaClient) -> None` t
 
 There's no future v2 "trade" gate yet; when that lands, add a `DELTA_MCP_MODE=trade` flag and a `tools/trading.py` register call gated on `(has_credentials and mode == "trade")`. The signer + auth plumbing is already in place.
 
+### Debug logging
+
+`debug_log.py` exposes `configure(cfg) -> Path | None`, called from `build_server`. When
+`DELTA_MCP_DEBUG` is truthy it attaches a `FileHandler` to the `delta_exchange_mcp` and `httpx`
+loggers (INFO, `propagate=False`, **never** `logging.basicConfig`) so request URLs + response
+bodies land in `~/.delta-exchange-mcp/logs/debug-<ts>-<pid>.log`. `client.py` emits the `→`/`←`/`✗`
+lines. **Invariant: credentials (api-key / api_secret / signature / timestamp) are never logged** —
+only headers carry them and we never log the headers dict. Regression test:
+`test_logs_request_and_body_but_no_secrets`. The module is deliberately **not** named `logging.py`
+(would shadow the stdlib `logging` import). `server.py` registers a `get_debug_status` tool (only
+when debug is on) so the assistant can report the log path; the path is also in the stderr startup
+banner.
+
 ### Environment naming
 
 `DELTA_MCP_ENV` values are `india_prod` / `india_testnet` (not `mainnet`/`testnet`) to match Delta's own URL naming (`api.india.delta.exchange`, `cdn-ind.testnet.deltaex.org`). `india_prod` is the default — users ask "what's BTCUSD mid", they mean prod, not testnet.

@@ -40,3 +40,20 @@ def test_partial_credentials_do_not_count(monkeypatch):
     monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     cfg = config_mod.load()
     assert cfg.has_credentials is False
+
+
+def test_debug_off_by_default(monkeypatch):
+    monkeypatch.delenv("DELTA_MCP_DEBUG", raising=False)
+    assert config_mod.load().debug is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on", "ON", " True "])
+def test_debug_truthy_values(monkeypatch, value):
+    monkeypatch.setenv("DELTA_MCP_DEBUG", value)
+    assert config_mod.load().debug is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "", "no"])
+def test_debug_falsy_values(monkeypatch, value):
+    monkeypatch.setenv("DELTA_MCP_DEBUG", value)
+    assert config_mod.load().debug is False
