@@ -260,7 +260,7 @@ New tools appear only after the respawn. The MCP `list_changed` notification ref
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DELTA_MCP_ENV` | `india_prod` | `india_prod` or `india_testnet`. |
+| `DELTA_MCP_ENV` | `india_prod` | `india_prod`, `india_testnet`, or `india_devnet`. |
 | `DELTA_API_KEY` | _(unset)_ | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
 | `DELTA_API_SECRET` | _(unset)_ | API secret matching `DELTA_API_KEY`. |
 | `DELTA_MCP_MODE` | `read` | `trade` registers the trading tools (requires API key + secret). Default `read` is read-only. See [Trading](#trading-opt-in). |

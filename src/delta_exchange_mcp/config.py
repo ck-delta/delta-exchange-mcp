@@ -4,15 +4,17 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-Env = Literal["india_prod", "india_testnet"]
+Env = Literal["india_prod", "india_testnet", "india_devnet"]
 Mode = Literal["read", "trade"]
 
 INDIA_PROD_REST = "https://api.india.delta.exchange/v2"
 INDIA_TESTNET_REST = "https://cdn-ind.testnet.deltaex.org/v2"
+INDIA_DEVNET_REST = "https://cdn-ind.devnet.deltaex.org/v2"
 
 BASE_URLS: dict[str, str] = {
     "india_prod": INDIA_PROD_REST,
     "india_testnet": INDIA_TESTNET_REST,
+    "india_devnet": INDIA_DEVNET_REST,
 }
 
 DEFAULT_ENV = "india_prod"
