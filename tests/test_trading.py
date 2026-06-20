@@ -285,6 +285,63 @@ async def test_batch_rejects_duplicate_client_order_id():
     assert route.called is False
 
 
+# --------------------------------------------------------------- BUG-2: batch partial failure
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_place_batch_flags_partial_failure_with_dropped_coids():
+    # sent 3, API echoes only 2 — the size:0 item is dropped silently by Delta.
+    route = respx.post(f"{INDIA_TESTNET_REST}/orders/batch").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": [
+            {"id": 1, "client_order_id": "a"},
+            {"id": 2, "client_order_id": "c"},
+        ]})
+    )
+    client = _client()
+    orders = [
+        {"side": "buy", "order_type": "limit_order", "limit_price": "61000", "size": 1, "client_order_id": "a"},
+        {"side": "buy", "order_type": "limit_order", "limit_price": "61000", "size": 1, "client_order_id": "b"},
+        {"side": "buy", "order_type": "limit_order", "limit_price": "61000", "size": 1, "client_order_id": "c"},
+    ]
+    out = await _call(client, "place_batch_orders", product_id=84, orders=orders)
+    assert route.called
+    pf = out[1]["partial_failure"]
+    assert pf["requested"] == 3 and pf["succeeded"] == 2 and pf["dropped"] == 1
+    assert pf["dropped_client_order_ids"] == ["b"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_cancel_batch_flags_dropped_ids():
+    respx.delete(f"{INDIA_TESTNET_REST}/orders/batch").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": [{"id": 111}]})
+    )
+    client = _client()
+    out = await _call(
+        client, "cancel_batch_orders", product_id=84,
+        orders=[{"id": 111}, {"id": 999999999}],
+    )
+    pf = out[1]["partial_failure"]
+    assert pf["requested"] == 2 and pf["succeeded"] == 1
+    assert pf["dropped_ids"] == [999999999]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_no_partial_flag_when_all_succeed():
+    respx.post(f"{INDIA_TESTNET_REST}/orders/batch").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": [{"id": 1}, {"id": 2}]})
+    )
+    client = _client()
+    orders = [
+        {"side": "buy", "order_type": "limit_order", "limit_price": "61000", "size": 1},
+        {"side": "buy", "order_type": "limit_order", "limit_price": "61000", "size": 1},
+    ]
+    out = await _call(client, "place_batch_orders", product_id=84, orders=orders)
+    assert "partial_failure" not in out[1]
+
+
 # --------------------------------------------------------------- BUG-4: close_all scope
 
 

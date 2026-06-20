@@ -62,6 +62,44 @@ def _validate_order(order_type: str | None, limit_price: str | None, size: int |
         raise ValueError("market_order must not carry a limit_price (it is ignored, not a cap)")
 
 
+def _flag_partial(result: Any, sent: list[dict[str, Any]]) -> Any:
+    """Detect a batch partial failure and annotate the response (BUG-2).
+
+    Delta returns only the processed orders with no per-index error, so we compare counts.
+    When fewer come back than were sent, attach a `partial_failure` block (and the dropped
+    ids / client_order_ids we can identify) without hiding the orders that succeeded. No-op
+    for dry-run echoes (nothing was sent) and when every item came back.
+    """
+    if not isinstance(result, dict) or result.get("dry_run"):
+        return result
+    returned = result.get("result")
+    if not isinstance(returned, list) or len(returned) >= len(sent):
+        return result
+    returned_ids = {o.get("id") for o in returned if isinstance(o, dict)}
+    returned_coids = {o.get("client_order_id") for o in returned if isinstance(o, dict)}
+    dropped_ids = [
+        o["id"] for o in sent
+        if isinstance(o, dict) and o.get("id") is not None and o["id"] not in returned_ids
+    ]
+    dropped_coids = [
+        o["client_order_id"] for o in sent
+        if isinstance(o, dict)
+        and o.get("client_order_id") is not None
+        and o["client_order_id"] not in returned_coids
+    ]
+    partial: dict[str, Any] = {
+        "requested": len(sent),
+        "succeeded": len(returned),
+        "dropped": len(sent) - len(returned),
+    }
+    if dropped_ids:
+        partial["dropped_ids"] = dropped_ids
+    if dropped_coids:
+        partial["dropped_client_order_ids"] = dropped_coids
+    result["partial_failure"] = partial
+    return result
+
+
 def _round_to_tick(price: str, tick: Decimal) -> tuple[str, bool]:
     """Round a price string to the nearest multiple of tick.
 
@@ -336,10 +374,11 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         return await _finish("cancel_all_orders", "DELETE", "/orders/all", payload, dry_run=dry_run)
 
     # ---------------------------------------------------------------- batch orders
-    # BUG-2 (batch partial failure reported as success) is intentionally NOT handled here:
-    # Delta's batch endpoints return only the processed orders with no per-index error info,
-    # so the right contract (per-index status vs atomic reject) is an open question for the
-    # product team. Do not paper over it with a count-mismatch heuristic without that call.
+    # BUG-2: Delta's batch endpoints return only the processed orders with no per-index
+    # error info, so itemized per-index status is impossible. _flag_partial detects a
+    # count mismatch (sent N, returned M<N) and attaches a `partial_failure` block while
+    # still returning the orders that went through — the caller is told some items were
+    # dropped without losing sight of what is now live.
 
     def _check_batch(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not orders:
@@ -378,7 +417,8 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
             "product_symbol": product_symbol,
             "orders": cleaned,
         }
-        return await _finish("place_batch_orders", "POST", "/orders/batch", payload, dry_run=dry_run)
+        result = await _finish("place_batch_orders", "POST", "/orders/batch", payload, dry_run=dry_run)
+        return _flag_partial(result, cleaned)
 
     @mcp.tool()
     async def edit_batch_orders(
@@ -399,7 +439,8 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
             "product_symbol": product_symbol,
             "orders": cleaned,
         }
-        return await _finish("edit_batch_orders", "PUT", "/orders/batch", payload, dry_run=dry_run)
+        result = await _finish("edit_batch_orders", "PUT", "/orders/batch", payload, dry_run=dry_run)
+        return _flag_partial(result, cleaned)
 
     @mcp.tool()
     async def cancel_batch_orders(
@@ -412,12 +453,14 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
     ) -> dict[str, Any]:
         """Cancel up to 50 orders on one contract in a single request."""
         _require_one(product_id, product_symbol)
+        cleaned = _check_batch(orders)
         payload = {
             "product_id": product_id,
             "product_symbol": product_symbol,
-            "orders": _check_batch(orders),
+            "orders": cleaned,
         }
-        return await _finish("cancel_batch_orders", "DELETE", "/orders/batch", payload, dry_run=dry_run)
+        result = await _finish("cancel_batch_orders", "DELETE", "/orders/batch", payload, dry_run=dry_run)
+        return _flag_partial(result, cleaned)
 
     # ---------------------------------------------------------------- bracket orders
 
