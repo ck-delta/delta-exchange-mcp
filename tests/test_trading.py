@@ -145,8 +145,8 @@ async def test_close_all_fetches_and_caches_user_id():
     client = _client()
     mcp = FastMCP("test")
     trading.register(mcp, client, None)
-    await mcp.call_tool("close_all_positions", {})
-    await mcp.call_tool("close_all_positions", {})
+    await mcp.call_tool("close_all_positions", {"close_all_portfolio": True})
+    await mcp.call_tool("close_all_positions", {"close_all_portfolio": True})
 
     assert profile.call_count == 1  # cached after first fetch
     assert close.call_count == 2
@@ -232,3 +232,186 @@ def test_trade_tools_present_in_trade_mode(monkeypatch):
         "adjust_position_margin", "close_all_positions", "configure_auto_topup",
     ):
         assert tool in names
+
+
+# --------------------------------------------------------------- BUG-1: cancel_all defaults
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_cancel_all_bare_call_defaults_all_flags_true():
+    route = respx.delete(f"{INDIA_TESTNET_REST}/orders/all").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {}})
+    )
+    client = _client()
+    await _call(client, "cancel_all_orders", product_id=84)
+    body = route.calls[0].request.content
+    assert b'"cancel_limit_orders":"true"' in body
+    assert b'"cancel_stop_orders":"true"' in body
+    assert b'"cancel_reduce_only_orders":"true"' in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_cancel_all_explicit_flag_stays_narrow():
+    route = respx.delete(f"{INDIA_TESTNET_REST}/orders/all").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {}})
+    )
+    client = _client()
+    await _call(client, "cancel_all_orders", product_id=84, cancel_limit_orders=True)
+    body = route.calls[0].request.content
+    assert b'"cancel_limit_orders":"true"' in body
+    # the other two are NOT auto-set when one flag is given explicitly
+    assert b"cancel_stop_orders" not in body
+    assert b"cancel_reduce_only_orders" not in body
+
+
+# --------------------------------------------------------------- BUG-3: duplicate coid in batch
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_rejects_duplicate_client_order_id():
+    route = respx.post(f"{INDIA_TESTNET_REST}/orders/batch").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": []})
+    )
+    client = _client()
+    orders = [
+        {"side": "buy", "order_type": "limit_order", "limit_price": "61000", "size": 1, "client_order_id": "dup"},
+        {"side": "buy", "order_type": "limit_order", "limit_price": "61001", "size": 1, "client_order_id": "dup"},
+    ]
+    with pytest.raises(Exception, match="duplicate client_order_id in batch: dup"):
+        await _call(client, "place_batch_orders", product_id=84, orders=orders)
+    assert route.called is False
+
+
+# --------------------------------------------------------------- BUG-4: close_all scope
+
+
+@pytest.mark.asyncio
+async def test_close_all_requires_a_scope():
+    client = _client()
+    with pytest.raises(Exception, match="at least one of close_all_portfolio or close_all_isolated"):
+        await _call(client, "close_all_positions")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_close_all_explicit_scope_not_broadened():
+    respx.get(f"{INDIA_TESTNET_REST}/profile").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {"id": 7}})
+    )
+    route = respx.post(f"{INDIA_TESTNET_REST}/positions/close_all").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {}})
+    )
+    client = _client()
+    await _call(client, "close_all_positions", close_all_isolated=True)
+    body = route.calls[0].request.content
+    assert b'"close_all_isolated":true' in body
+    assert b'"close_all_portfolio":false' in body
+
+
+# --------------------------------------------------------------- BUG-5: place_order brackets
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_place_order_includes_bracket_params():
+    route = respx.post(f"{INDIA_TESTNET_REST}/orders").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {"id": 9}})
+    )
+    client = _client()
+    await _call(
+        client, "place_order",
+        product_id=84, size=1, side="buy", order_type="limit_order", limit_price="61000",
+        bracket_take_profit_price="66500", bracket_stop_loss_price="60000",
+    )
+    body = route.calls[0].request.content
+    assert b'"bracket_take_profit_price":"66500"' in body
+    assert b'"bracket_stop_loss_price":"60000"' in body
+
+
+# --------------------------------------------------------------- BUG-6/7: order validation
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_market_order_rejects_limit_price():
+    route = respx.post(f"{INDIA_TESTNET_REST}/orders").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {}})
+    )
+    client = _client()
+    for dry in (False, True):
+        with pytest.raises(Exception, match="market_order must not carry a limit_price"):
+            await _call(
+                client, "place_order",
+                product_id=84, size=1, side="buy", order_type="market_order",
+                limit_price="50000", dry_run=dry,
+            )
+    assert route.called is False
+
+
+@pytest.mark.asyncio
+async def test_limit_order_requires_limit_price():
+    client = _client()
+    with pytest.raises(Exception, match="limit_price is required for limit_order"):
+        await _call(
+            client, "place_order",
+            product_id=84, size=1, side="buy", order_type="limit_order", dry_run=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_positive_size_rejected():
+    client = _client()
+    with pytest.raises(Exception, match="size must be a positive integer"):
+        await _call(
+            client, "place_order",
+            product_id=84, size=-5, side="buy", order_type="limit_order",
+            limit_price="61000", dry_run=True,
+        )
+
+
+# --------------------------------------------------------------- BUG-8: tick rounding
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_off_tick_price_rounded_to_nearest():
+    respx.get(f"{INDIA_TESTNET_REST}/products/BTCUSD").mock(
+        return_value=httpx.Response(
+            200, json={"success": True, "result": {"id": 84, "symbol": "BTCUSD", "tick_size": "0.1"}}
+        )
+    )
+    route = respx.post(f"{INDIA_TESTNET_REST}/orders").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {"id": 1}})
+    )
+    client = _client()
+    out = await _call(
+        client, "place_order",
+        product_symbol="BTCUSD", size=1, side="buy", order_type="limit_order", limit_price="62000.07",
+    )
+    assert b'"limit_price":"62000.1"' in route.calls[0].request.content
+    structured = out[1]
+    assert structured["price_adjustments"] == [
+        {"field": "limit_price", "sent": "62000.07", "normalized": "62000.1"}
+    ]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_tick_rounding_skipped_when_unresolved():
+    # product lookup fails — the order must still go through with the price unchanged.
+    respx.get(f"{INDIA_TESTNET_REST}/products/BTCUSD").mock(
+        return_value=httpx.Response(500, json={"success": False, "error": {"code": "server_error"}})
+    )
+    route = respx.post(f"{INDIA_TESTNET_REST}/orders").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {"id": 1}})
+    )
+    client = _client()
+    out = await _call(
+        client, "place_order",
+        product_symbol="BTCUSD", size=1, side="buy", order_type="limit_order", limit_price="62000.07",
+    )
+    assert b'"limit_price":"62000.07"' in route.calls[0].request.content
+    assert "price_adjustments" not in out[1]
