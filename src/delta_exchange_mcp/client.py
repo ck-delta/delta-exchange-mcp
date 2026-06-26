@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import time
 from importlib.metadata import PackageNotFoundError, version
@@ -61,6 +62,15 @@ class DeltaClient:
         """
         return await self._request("GET", path, params=params, auth=auth, raw=True)
 
+    async def post(self, path: str, json_body: Any = None, *, auth: bool = False) -> Any:
+        return await self._request("POST", path, json_body=json_body, auth=auth)
+
+    async def put(self, path: str, json_body: Any = None, *, auth: bool = False) -> Any:
+        return await self._request("PUT", path, json_body=json_body, auth=auth)
+
+    async def delete(self, path: str, json_body: Any = None, *, auth: bool = False) -> Any:
+        return await self._request("DELETE", path, json_body=json_body, auth=auth)
+
     async def _request(
         self,
         method: str,
@@ -72,7 +82,16 @@ class DeltaClient:
         raw: bool = False,
     ) -> Any:
         headers: dict[str, str] = {}
-        body_str = ""  # TODO when POST lands in v2
+        # Delta signs the EXACT request body bytes. Serialize once (compact, no spaces) and
+        # feed the same string to both sign() and httpx via content= — using json= would let
+        # httpx re-serialize with different spacing and break the signature. Mirrors the
+        # "filter params once, feed both signing and the request" pattern below.
+        body_str = ""
+        content: bytes | None = None
+        if json_body is not None:
+            body_str = json.dumps(json_body, separators=(",", ":"))
+            content = body_str.encode()
+            headers["Content-Type"] = "application/json"
         query_str = ""
         filtered_params = {k: v for k, v in (params or {}).items() if v is not None} or None
         if filtered_params:
@@ -94,15 +113,17 @@ class DeltaClient:
             headers["signature"] = signature
             headers["timestamp"] = ts
 
+        # body_str carries no credentials (those live only in headers, never logged).
         logger.info(
-            "→ %s %s params=%s auth=%s", method, f"{self._base_path}{path}", filtered_params, auth
+            "→ %s %s params=%s auth=%s body=%s",
+            method, f"{self._base_path}{path}", filtered_params, auth, body_str[:_BODY_LOG_CAP],
         )
 
         last_error: Exception | None = None
         for attempt in range(3):
             try:
                 resp = await self._http.request(
-                    method, path, params=filtered_params, json=json_body, headers=headers
+                    method, path, params=filtered_params, content=content, headers=headers
                 )
             except httpx.HTTPError as e:
                 last_error = e

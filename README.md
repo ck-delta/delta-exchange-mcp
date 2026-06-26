@@ -7,7 +7,7 @@ Official MCP (Model Context Protocol) server for **Delta Exchange India**. Lets 
 
 > **Status:** Beta. Functional and used internally, but the tool surface and configuration may still change. Please [open an issue](https://github.com/delta-exchange/delta-exchange-mcp/issues) for bugs, missing tools, or rough edges. Early reports directly shape what ships next.
 
-**What you get:** 9 public market-data tools + 12 authenticated read-only account tools (positions, orders, fills, wallet, stats, leverage, preferences, profile). **No mutations.** The server cannot place, edit, or cancel orders.
+**What you get:** 9 public market-data tools + 12 authenticated read-only account tools (positions, orders, fills, wallet, stats, leverage, preferences, profile). Trading mutations (place / edit / cancel orders, brackets, leverage, margin, close-all) are available but **off by default** — they register only when you opt in with `DELTA_MCP_MODE=trade` (see [Trading](#trading-opt-in)).
 
 ---
 
@@ -260,11 +260,14 @@ New tools appear only after the respawn. The MCP `list_changed` notification ref
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DELTA_MCP_ENV` | `india_prod` | `india_prod` or `india_testnet`. |
+| `DELTA_MCP_ENV` | `india_prod` | `india_prod`, `india_testnet`, or `india_devnet`. |
 | `DELTA_API_KEY` | _(unset)_ | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
 | `DELTA_API_SECRET` | _(unset)_ | API secret matching `DELTA_API_KEY`. |
+| `DELTA_MCP_MODE` | `read` | `trade` registers the trading tools (requires API key + secret). Default `read` is read-only. See [Trading](#trading-opt-in). |
 | `DELTA_MCP_DEBUG` | _(unset)_ | `1`/`true`/`yes`/`on` writes HTTP request URLs and response bodies to a log file (see [Debugging](#debugging--reporting-a-bug)). |
 | `DELTA_MCP_DEBUG_FILE` | _(auto)_ | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
+| `DELTA_MCP_AUDIT` | _(on in trade mode)_ | Set `off`/`false`/`0`/`no` to disable the trading audit log. On by default whenever `DELTA_MCP_MODE=trade`. |
+| `DELTA_MCP_AUDIT_FILE` | _(auto)_ | Override the audit log path. Default: `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`. |
 
 ## Debugging / reporting a bug
 
@@ -315,6 +318,43 @@ on startup and you can also just **ask the assistant: _"where is the debug log?"
 | `get_product_leverage` | Per-product leverage setting. |
 | `get_trading_stats` / `get_trading_preferences` / `get_profile` | Account-level stats, preferences, profile. |
 
+### Trading (opt-in)
+
+Trading tools register **only** when `DELTA_MCP_MODE=trade` is set alongside valid credentials. Without it the server stays read-only.
+
+| Tool | Action |
+|---|---|
+| `place_order` / `edit_order` / `cancel_order` | Single limit/market/stop order lifecycle. |
+| `cancel_all_orders` | Cancel open orders (optionally filtered by product / contract type). |
+| `place_batch_orders` / `edit_batch_orders` / `cancel_batch_orders` | Up to 50 orders on one contract per request. |
+| `place_bracket_order` / `edit_bracket_order` | Attach / edit a take-profit + stop-loss bracket. |
+| `set_product_leverage` | Set order leverage for a product. |
+| `adjust_position_margin` | Add / remove isolated margin on a position. |
+| `close_all_positions` | Close all open positions (your `user_id` is resolved automatically from your profile). |
+| `configure_auto_topup` | Toggle per-position auto top-up. |
+
+Enable it in your client config:
+
+```jsonc
+"delta-exchange": {
+  "command": "uvx",
+  "args": ["delta-exchange-mcp"],
+  "env": {
+    "DELTA_MCP_ENV": "india_prod",
+    "DELTA_API_KEY": "your-api-key",
+    "DELTA_API_SECRET": "your-api-secret",
+    "DELTA_MCP_MODE": "trade"
+  }
+}
+```
+
+Safety features:
+
+- **Dry run.** Every mutating tool takes a `dry_run` flag. When `true`, the tool validates and returns the exact payload it *would* send, without sending it. Ask the assistant to "place the order as a dry run first."
+- **Audit log.** Every mutation (real or dry-run) is appended as one JSON line to `~/.delta-exchange-mcp/audit/` (owner-only `0600`). On by default in trade mode; disable with `DELTA_MCP_AUDIT=off`. The log records the tool, params, and result/order id — **never** credentials. Ask the assistant "where is the audit log?" (the `get_trading_status` tool returns the path).
+- **No silent retries.** Unlike GET reads, mutations are never auto-retried on timeout or rate-limit — a failure is surfaced, not re-sent.
+- **API key permission.** The key must have Trading enabled in Delta API management, and the requesting IP whitelisted.
+
 ## Example prompts
 
 Once connected, you can ask things like:
@@ -356,8 +396,8 @@ Maintainers: see [`RELEASING.md`](RELEASING.md) for the release procedure.
 
 ## Roadmap
 
-- **Now**: 9 public market-data + 12 authenticated read-only account tools.
-- **Next**: trading mutations (place / edit / cancel / close, leverage change) gated behind an explicit `DELTA_MCP_MODE=trade` flag, with an audit log and basic guardrails.
+- **Now**: 9 public market-data + 12 authenticated read-only account tools + 13 trading tools (opt-in via `DELTA_MCP_MODE=trade`, with dry-run and an audit log).
+- **Next**: richer guardrails (notional / position-size caps, confirmation prompts).
 
 ## Feedback & issues
 
@@ -374,6 +414,7 @@ Please redact `api_key` / `api_secret` from any logs or screenshots before attac
 
 ## Safety
 
-- **No mutations.** Every tool is GET. The server cannot place, edit, or cancel orders.
+- **Read-only by default.** Trading tools register only with the explicit `DELTA_MCP_MODE=trade` opt-in; otherwise every tool is a GET and the server cannot place, edit, or cancel orders.
+- **Auditable mutations.** When trading is on, every mutation is dry-runnable and written to an owner-only audit log; mutations are never auto-retried.
 - **Local stdio only.** Per-user keys never leave your machine; no shared hosted endpoint.
 - **Read the code.** It's a financial-tool MCP; treat it like one.
