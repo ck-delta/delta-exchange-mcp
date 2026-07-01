@@ -7,7 +7,7 @@ Official MCP (Model Context Protocol) server for **Delta Exchange India**. Lets 
 
 > **Status:** Beta. Functional and used internally, but the tool surface and configuration may still change. Please [open an issue](https://github.com/delta-exchange/delta-exchange-mcp/issues) for bugs, missing tools, or rough edges. Early reports directly shape what ships next.
 
-**What you get:** 9 public market-data tools + 12 authenticated read-only account tools (positions, orders, fills, wallet, stats, leverage, preferences, profile). Trading mutations (place / edit / cancel orders, brackets, leverage, margin, close-all) are available but **off by default** — they register only when you opt in with `DELTA_MCP_MODE=trade` (see [Trading](#trading-opt-in)).
+**What you get:** 14 public market-data tools + 13 authenticated read-only account tools (positions, orders, fills, wallet, stats, leverage, preferences, profile). Trading mutations (place / edit / cancel orders, brackets, leverage, margin, close-all) are available but **off by default** — they register only when you opt in with `DELTA_MCP_MODE=trade` (see [Trading](#trading-opt-in)).
 
 ---
 
@@ -305,6 +305,9 @@ on startup and you can also just **ask the assistant: _"where is the debug log?"
 | `get_orderbook` | Bid/ask depth for a symbol. |
 | `get_recent_trades` | Last N public trades. |
 | `get_candles` | OHLC candles by resolution. |
+| `get_funding_history` / `get_mark_price_history` / `get_oi_history` | Historical funding-rate, mark-price, and open-interest candles. |
+| `get_settlement_prices` | Settlement prices for expired / settled derivatives. |
+| `get_indices` | Spot price indices Delta builds from multiple exchanges. |
 | `get_reference_data` | Assets + indices reference. |
 
 ### Account read-only (requires `DELTA_API_KEY` + `DELTA_API_SECRET`)
@@ -314,7 +317,7 @@ on startup and you can also just **ask the assistant: _"where is the debug log?"
 | `get_positions` / `get_margined_positions` | Open positions, sizes, entry, unrealized PnL. |
 | `get_wallet_balances` / `get_wallet_transactions` | Per-asset balances + ledger. |
 | `get_open_orders` / `get_order_history` / `get_order_by_id` | Active and historical orders. |
-| `get_fills` | Trade fills (own). |
+| `get_fills` / `bulk_fills_export` | Own trade fills; bulk CSV export of fills to disk. |
 | `get_product_leverage` | Per-product leverage setting. |
 | `get_trading_stats` / `get_trading_preferences` / `get_profile` | Account-level stats, preferences, profile. |
 
@@ -396,7 +399,7 @@ Maintainers: see [`RELEASING.md`](RELEASING.md) for the release procedure.
 
 ## Roadmap
 
-- **Now**: 9 public market-data + 12 authenticated read-only account tools + 13 trading tools (opt-in via `DELTA_MCP_MODE=trade`, with dry-run and an audit log).
+- **Now**: 14 public market-data + 13 authenticated read-only account tools + 13 trading tools (opt-in via `DELTA_MCP_MODE=trade`, with dry-run and an audit log).
 - **Next**: richer guardrails (notional / position-size caps, confirmation prompts).
 
 ## Feedback & issues
