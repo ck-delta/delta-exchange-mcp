@@ -56,13 +56,13 @@ Each tool module exposes `register(mcp: FastMCP, client: DeltaClient) -> None` t
 
 ### Auth surface registration
 
-`tools/account.py` exposes 12 authenticated read-only tools (positions / margined-positions / wallet-balances / wallet-transactions / fills / open-orders / order-history / order-by-id / product-leverage / trading-stats / trading-preferences / profile). All call `client.get(..., auth=True)`.
+`tools/account.py` exposes the authenticated read-only tools (positions / margined-positions / wallet-balances / wallet-transactions / fills / bulk-fills-export / open-orders / order-history / order-by-id / product-leverage / trading-stats / trading-preferences / profile). All call `client.get(..., auth=True)`.
 
 `server.build_server()` registers them only when both creds are present. Without creds, the server runs in pure-public mode — same behaviour as before this surface existed.
 
 ### Trading surface (mutations)
 
-`tools/trading.py` exposes 13 authenticated write tools (place/edit/cancel order, cancel-all, place/edit/cancel batch, place/edit bracket, set-leverage, change-margin, close-all, auto-topup). Its `register(mcp, client, audit)` is gated on `(cfg.has_credentials and cfg.mode == "trade")` in `build_server`; `DELTA_MCP_MODE` defaults to `read`, so the surface is off unless explicitly opted into.
+`tools/trading.py` exposes the authenticated write tools (place/edit/cancel order, cancel-all, place/edit/cancel batch, place/edit bracket, set-leverage, change-margin, close-all, auto-topup). Its `register(mcp, client, audit)` is gated on `(cfg.has_credentials and cfg.mode == "trade")` in `build_server`; `DELTA_MCP_MODE` defaults to `read`, so the surface is off unless explicitly opted into.
 
 Conventions in `trading.py`:
 - Every mutating tool takes `dry_run: bool`. The shared `_finish(tool, method, path, payload, dry_run)` helper strips `None` keys, and when `dry_run` returns `{dry_run, method, path, payload}` **without** any HTTP call; otherwise it sends via `client.post/put/delete` and records to the audit log on both success and `DeltaApiError`.
