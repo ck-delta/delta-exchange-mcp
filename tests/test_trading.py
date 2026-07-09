@@ -123,6 +123,40 @@ async def test_place_order_requires_exactly_one_product_ref():
 
 
 @pytest.mark.asyncio
+async def test_place_order_rejects_bracket_price_and_trail_together():
+    client = _client()
+    with pytest.raises(Exception, match="either a fixed price or a trailing amount"):
+        await _call(
+            client, "place_order",
+            product_id=27, size=1, side="buy", order_type="market_order",
+            bracket_stop_loss_price="9000", bracket_trail_amount="50", dry_run=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_edit_bracket_rejects_bracket_price_and_trail_together():
+    client = _client()
+    with pytest.raises(Exception, match="either a fixed price or a trailing amount"):
+        await _call(
+            client, "edit_bracket_order",
+            id=7, product_id=27,
+            bracket_stop_loss_price="9000", bracket_trail_amount="50", dry_run=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_place_bracket_rejects_sl_leg_price_and_trail_together():
+    client = _client()
+    with pytest.raises(Exception, match="either a fixed price or a trailing amount"):
+        await _call(
+            client, "place_bracket_order",
+            product_id=27,
+            stop_loss_order={"order_type": "market_order", "stop_price": "9000", "trail_amount": "50"},
+            dry_run=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_batch_cap_enforced():
     client = _client()
     orders = [{"size": 1, "side": "buy", "order_type": "limit_order", "limit_price": "1"}] * 51
