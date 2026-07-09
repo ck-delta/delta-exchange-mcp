@@ -48,6 +48,16 @@ def _require_one(product_id: int | None, product_symbol: str | None) -> None:
         raise ValueError("pass exactly one of product_id or product_symbol")
 
 
+def _validate_bracket_sl(stop_loss_price: str | None, trail_amount: str | None) -> None:
+    """A bracket stop-loss is either a fixed trigger price or a trailing amount, never both.
+
+    Delta rejects the combination with a bad_schema error; guarding here fails fast (and in
+    dry-run) with a clearer message instead of spending a live round-trip.
+    """
+    if stop_loss_price is not None and trail_amount is not None:
+        raise ValueError("bracket stop-loss takes either a fixed price or a trailing amount, not both")
+
+
 def _validate_order(order_type: str | None, limit_price: str | None, size: int | None) -> None:
     """Client-side cross-field checks the API would otherwise only catch at send time.
 
@@ -264,6 +274,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         """
         _require_one(product_id, product_symbol)
         _validate_order(order_type, limit_price, size)
+        _validate_bracket_sl(bracket_stop_loss_price, bracket_trail_amount)
         price_fields = {
             "limit_price": limit_price,
             "stop_price": stop_price,
@@ -487,6 +498,8 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
             raise ValueError("provide at least one of stop_loss_order or take_profit_order")
         sl = _clean(stop_loss_order) if stop_loss_order else None
         tp = _clean(take_profit_order) if take_profit_order else None
+        if sl:
+            _validate_bracket_sl(sl.get("stop_price"), sl.get("trail_amount"))
         adjustments: list[dict[str, str]] = []
         for leg_name, leg in (("stop_loss_order", sl), ("take_profit_order", tp)):
             if not leg:
@@ -527,6 +540,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         tick; see price_adjustments in the response.
         """
         _require_one(product_id, product_symbol)
+        _validate_bracket_sl(bracket_stop_loss_price, bracket_trail_amount)
         price_fields = {
             "bracket_stop_loss_price": bracket_stop_loss_price,
             "bracket_stop_loss_limit_price": bracket_stop_loss_limit_price,
