@@ -27,6 +27,33 @@ The server runs **local stdio only**: your MCP client launches it as a subproces
 
 `DELTA_API_KEY` / `DELTA_API_SECRET` are **optional** in every snippet below — drop them for public-data-only mode. Set `DELTA_MCP_ENV=india_testnet` for testnet.
 
+### Let your coding agent set it up
+
+Copy this into Claude Code, Codex, Cursor, or any agent that can edit files on your machine:
+
+```text
+Set up the Delta Exchange MCP server for me.
+
+Read https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/main/README.md
+and follow the "Install in your MCP client" section for the client I am using. If you
+cannot tell which client that is, ask me.
+
+Rules:
+- Add a server entry named delta-exchange-mcp. Do not modify or remove any other MCP
+  server I already have configured.
+- Write the literal placeholders your-api-key and your-api-secret. Do not ask me for my
+  real API keys, and do not repeat them back to me. I will fill them in myself.
+- Use DELTA_MCP_ENV=india_prod unless I tell you testnet.
+- Check your work by running: uvx delta-exchange-mcp --version
+  Do not run the server without arguments. It serves over stdio and will not exit.
+- If that command fails with an import error, follow the README's Troubleshooting section.
+- Tell me which file you changed, and that I need to restart the client.
+```
+
+Your agent writes placeholder credentials, never your real ones. Open the file it names,
+replace `your-api-key` and `your-api-secret` with your keys from the Delta dashboard, then
+restart the client. To set it up by hand instead, follow the steps for your client below.
+
 ### Claude Code
 
 ```bash
@@ -62,7 +89,7 @@ Global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). P
 
 Restart Cursor or open **Settings → Tools & MCP** to refresh.
 
-### Codex
+### Codex CLI
 
 Add to `~/.codex/config.toml`:
 
@@ -72,6 +99,19 @@ command = "uvx"
 args = ["delta-exchange-mcp"]
 env = { DELTA_MCP_ENV = "india_prod", DELTA_API_KEY = "your-api-key", DELTA_API_SECRET = "your-api-secret" }
 ```
+
+### Codex desktop app
+
+To add the server from the app's UI, go to **Plugins → MCPs → Connect to a custom MCP**, leave **Type** as STDIO, and fill in:
+
+| Field | Value |
+|---|---|
+| Name | `delta-exchange-mcp` |
+| Command to launch | `uvx` (`uvx.exe` on Windows) |
+| Arguments | `delta-exchange-mcp` |
+| Environment variables | `DELTA_MCP_ENV` = `india_prod`, `DELTA_API_KEY` = your-api-key, `DELTA_API_SECRET` = your-api-secret |
+
+Leave the other fields empty, then restart the app.
 
 ### Windsurf
 
