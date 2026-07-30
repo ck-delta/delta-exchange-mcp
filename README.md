@@ -89,7 +89,7 @@ Global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). P
 
 Restart Cursor or open **Settings → Tools & MCP** to refresh.
 
-### Codex
+### Codex CLI
 
 Add to `~/.codex/config.toml`:
 
@@ -99,6 +99,19 @@ command = "uvx"
 args = ["delta-exchange-mcp"]
 env = { DELTA_MCP_ENV = "india_prod", DELTA_API_KEY = "your-api-key", DELTA_API_SECRET = "your-api-secret" }
 ```
+
+### Codex desktop app
+
+To add the server from the app's UI, go to **Plugins → MCPs → Connect to a custom MCP**, leave **Type** as STDIO, and fill in:
+
+| Field | Value |
+|---|---|
+| Name | `delta-exchange-mcp` |
+| Command to launch | `uvx` (`uvx.exe` on Windows) |
+| Arguments | `delta-exchange-mcp` |
+| Environment variables | `DELTA_MCP_ENV` = `india_prod`, `DELTA_API_KEY` = your-api-key, `DELTA_API_SECRET` = your-api-secret |
+
+Leave the other fields empty, then restart the app.
 
 ### Windsurf
 
