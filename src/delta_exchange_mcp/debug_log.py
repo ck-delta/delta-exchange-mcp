@@ -16,10 +16,10 @@ import os
 import sys
 import tempfile
 import time
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from delta_exchange_mcp.config import Config
+from delta_exchange_mcp.version import PACKAGE_VERSION
 
 LOGGER_NAMES = ("delta_exchange_mcp", "httpx")
 _FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
@@ -83,15 +83,11 @@ def configure(cfg: Config) -> Path | None:
         logger.addHandler(handler)
         logger.propagate = False  # never leak to a root/stdout handler
 
-    try:
-        pkg_version = version("delta-exchange-mcp")
-    except PackageNotFoundError:
-        pkg_version = "0+unknown"
     surface = "market+account" if cfg.has_credentials else "market"
     logging.getLogger(LOGGER_NAMES[0]).info(
         "debug log start: delta-exchange-mcp/%s env=%s base_url=%s surface=%s | "
         "credentials (api-key/secret/signature) are never logged; "
         "response bodies may contain account data",
-        pkg_version, cfg.env, cfg.base_url, surface,
+        PACKAGE_VERSION, cfg.env, cfg.base_url, surface,
     )
     return path

@@ -6,7 +6,6 @@ import hmac
 import json
 import logging
 import time
-from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,16 +13,14 @@ import httpx
 
 from delta_exchange_mcp.config import Config
 from delta_exchange_mcp.errors import DeltaApiError
+from delta_exchange_mcp.version import PACKAGE_VERSION
 
 logger = logging.getLogger("delta_exchange_mcp")
 
 # Cap on how much of a response body we log, so a huge paginated payload can't bloat the file.
 _BODY_LOG_CAP = 50_000
 
-try:
-    USER_AGENT = f"delta-exchange-mcp/{version('delta-exchange-mcp')}"
-except PackageNotFoundError:
-    USER_AGENT = "delta-exchange-mcp/0+unknown"
+USER_AGENT = f"delta-exchange-mcp/{PACKAGE_VERSION}"
 
 
 def sign(secret: str, method: str, timestamp: str, path: str, query: str, body: str) -> str:

@@ -1,6 +1,6 @@
 [project]
 name = "delta-exchange-mcp"
-version = "0.4.1"
+version = "0.4.2"
 description = "Official MCP server for Delta Exchange India — market data and account read for AI assistants."
 readme = "README.md"
 authors = [
@@ -8,9 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "httpx>=0.28.1",
-    "mcp>=1.12.4",
-    "pydantic>=2.13.2",
+    "httpx>=0.28.1,<1",
+    "mcp>=1.12.4,<2",
+    "pydantic>=2.13.2,<3",
 ]
 
 [project.scripts]

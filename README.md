@@ -21,7 +21,7 @@ Sanity-check the install:
 uvx delta-exchange-mcp --help
 ```
 
-The server runs **local stdio only**: your MCP client launches it as a subprocess, and your API keys never leave your machine. `uvx` resolves the latest published version from PyPI on each launch. To pin a specific version, use `uvx "delta-exchange-mcp==0.2.0"`.
+The server runs **local stdio only**: your MCP client launches it as a subprocess, and your API keys never leave your machine. `uvx` resolves the latest published version from PyPI on each launch. To pin a specific version, use `uvx "delta-exchange-mcp==0.4.2"`. Pin `0.4.2` or newer: earlier versions do not start on a fresh install (see [Troubleshooting](#troubleshooting)).
 
 ## Install in your MCP client
 
@@ -239,7 +239,7 @@ Register the dev server under a separate name (e.g. `delta-exchange-mcp-dev`) so
 
 `uvx` caches the resolved package, so a new PyPI release isn't picked up automatically. To move to the latest version:
 
-1. **If your config pins a version** (`uvx "delta-exchange-mcp==0.1.1"`), bump the pin to the new version, or drop it to float to latest.
+1. **If your config pins a version** (`uvx "delta-exchange-mcp==0.4.2"`), bump the pin to the new version, or drop it to float to latest.
 2. **Refresh the `uvx` cache** so it fetches the new build:
 
    ```bash
@@ -268,6 +268,38 @@ New tools appear only after the respawn. The MCP `list_changed` notification ref
 | `DELTA_MCP_DEBUG_FILE` | _(auto)_ | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
 | `DELTA_MCP_AUDIT` | _(on in trade mode)_ | Set `off`/`false`/`0`/`no` to disable the trading audit log. On by default whenever `DELTA_MCP_MODE=trade`. |
 | `DELTA_MCP_AUDIT_FILE` | _(auto)_ | Override the audit log path. Default: `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`. |
+
+## Troubleshooting
+
+### `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`
+
+Your client shows the server as failed, and the process writes this traceback to stderr.
+
+Version 0.4.1 and all earlier versions declare `mcp>=1.12.4` with no upper limit. The `mcp`
+package published 2.0.0 on 28 July 2026, and 2.0.0 removed the `mcp.server.fastmcp` module.
+`uvx` resolves from the declared range and ignores `uv.lock`, so a fresh install gets 2.0.0
+and the server stops at import. Existing installs and `uv sync` checkouts are not affected.
+
+Move to 0.4.2 or a newer version, which sets an upper limit of `mcp<2`:
+
+```bash
+uvx --refresh delta-exchange-mcp --help
+```
+
+To stay on an older version, set the limit yourself:
+
+```bash
+uvx --with "mcp<2" "delta-exchange-mcp==0.4.1"
+```
+
+Add the same `--with` argument to your MCP client config if you pin an older version there:
+
+```jsonc
+"delta-exchange": {
+  "command": "uvx",
+  "args": ["--with", "mcp<2", "delta-exchange-mcp==0.4.1"]
+}
+```
 
 ## Debugging / reporting a bug
 
