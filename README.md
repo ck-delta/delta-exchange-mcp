@@ -69,7 +69,11 @@ claude mcp add delta-exchange-mcp \
 
 ### Cursor
 
-Global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). Project-scoped alternative: `.cursor/mcp.json` in the repo root.
+[![Add to Cursor](https://img.shields.io/badge/Cursor-Add_Server-0098FF?style=flat-square)](https://cursor.com/install-mcp?name=delta-exchange-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJkZWx0YS1leGNoYW5nZS1tY3AiXSwiZW52Ijp7IkRFTFRBX01DUF9FTlYiOiJpbmRpYV9wcm9kIn19)
+
+Cursor shows an approval dialog and writes the entry itself. The link carries no credentials, so you get the market-data tools straight away; add `DELTA_API_KEY` and `DELTA_API_SECRET` to the entry it creates to reach your account.
+
+To configure by hand instead — global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). Project-scoped alternative: `.cursor/mcp.json` in the repo root.
 
 ```json
 {
@@ -157,7 +161,12 @@ Add to `~/.config/zed/settings.json` (user-level) or `.zed/settings.json` (proje
 
 ### VS Code (GitHub Copilot)
 
-Add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and each entry needs an explicit `"type": "stdio"`:
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22india_prod%22%7D%7D)
+[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22india_prod%22%7D%7D&quality=insiders)
+
+As with Cursor, the link carries no credentials — add `DELTA_API_KEY` and `DELTA_API_SECRET` afterwards to reach your account.
+
+To configure by hand instead, add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and each entry needs an explicit `"type": "stdio"`:
 
 ```json
 {
