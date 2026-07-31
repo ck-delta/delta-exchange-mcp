@@ -304,9 +304,6 @@ Leave both prompts empty for public-data-only mode.
 
 ### Claude Code
 
-<details>
-<summary><b>CLI one-liner</b></summary>
-
 ```bash
 claude mcp add delta-exchange-mcp \
   --scope user \
@@ -318,14 +315,7 @@ claude mcp add delta-exchange-mcp \
 
 `--scope user` makes the server available across all projects. Verify with `claude mcp list`.
 
-</details>
-
 ### Codex
-
-<details>
-<summary><b>CLI one-liner, or the desktop app's form</b></summary>
-
-CLI:
 
 ```bash
 codex mcp add delta-exchange-mcp \
@@ -335,7 +325,12 @@ codex mcp add delta-exchange-mcp \
   -- uvx delta-exchange-mcp
 ```
 
-Verify with `codex mcp list`. Or write `~/.codex/config.toml` by hand:
+Verify with `codex mcp list`.
+
+<details>
+<summary><b>Codex — TOML config, or the desktop app's form</b></summary>
+
+Write `~/.codex/config.toml` by hand:
 
 ```toml
 [mcp_servers.delta-exchange-mcp]
