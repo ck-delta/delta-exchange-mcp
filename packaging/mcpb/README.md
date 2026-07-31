@@ -160,14 +160,24 @@ is generated alongside the shipped `pyproject.toml` and so agrees with it.
   Upstream issues [#277](https://github.com/modelcontextprotocol/mcpb/issues/277) and
   [#21](https://github.com/modelcontextprotocol/mcpb/issues/21) (open since 2025-06-28).
   Never gate CI on `mcpb verify`; `verify.py` is the structural check that actually works.
-- **Only Claude Desktop's `uv` provisioning is confirmed, and only its discovery branch.**
-  A real install on macOS (2026-07-31, app build 2026-07-24) logged `[UV Runtime] Running uv
-  sync`, then `[UV Discovery] ✓ Found system UV: /opt/homebrew/bin/uv`, then `[MCP Launch]
-  [UV Runtime] Launching: /opt/homebrew/bin/uv`, and produced a `.venv` on a `uv`-downloaded
-  CPython 3.13.13 rather than a system one — so the no-Python-prerequisite claim is observed,
-  not inferred. The download fallback is read from the app bundle (a per-platform table of
-  `astral-sh/uv` release URLs behind the discovery step) and has **not** been exercised here,
-  because this machine already had `uv`. To test it, remove `uv` from where the app searches
-  and reinstall. Claude Code and MCP for Windows also accept `.mcpb`, but whether they
-  provision `uv` the same way is unverified, and `compatibility.runtimes.python` is what
-  surfaces the requirement if one of them does not.
+- **The host pins an old `uv`, and that is the one users without `uv` will get.** When
+  discovery finds nothing it downloads a fixed version — 0.9.7, dated 2025-10-30 — not the
+  latest. Anyone who already has `uv` runs the bundle on theirs instead, so the two
+  populations build the venv with different `uv` versions, and the older one is the branch
+  nobody developing this will hit by accident. The shipped `uv.lock` is `version = 1`,
+  `revision = 3`, which 0.9.7 reads. **Re-check that after any change that regenerates the
+  lock**: a newer lock format would fail only for users without `uv`, who are the least
+  equipped to work out why.
+
+- **Claude Desktop's `uv` provisioning is confirmed on both branches; other hosts are not.**
+  Verified by two real installs on macOS on 2026-07-31 (app build 2026-07-24). With a system
+  `uv` present: `[UV Discovery] ✓ Found system UV: /opt/homebrew/bin/uv`. With `uv` unlinked
+  and no cached copy: `System UV not found, downloading bundled version...`, `Downloading UV
+  0.9.7 for darwin-arm64...`, `✓ Download verified successfully`, then `uv sync` and a normal
+  launch. Both produced a `.venv` on a `uv`-managed CPython 3.13.13 rather than a system
+  interpreter, so the no-Python-prerequisite claim is observed rather than inferred. Two
+  harmless artifacts to expect in the log: quarantine removal fails with `No such xattr:
+  com.apple.quarantine`, because an HTTP download is never quarantined; and every later
+  launch re-runs discovery, fails, and reports `✓ Using cached bundled UV`. Claude Code and
+  MCP for Windows also accept `.mcpb`, but whether they provision `uv` this way is unverified
+  — `compatibility.runtimes.python` is what surfaces the requirement if one of them does not.
