@@ -29,9 +29,16 @@ LONG_DESCRIPTION = (
 
 
 async def tool_entries() -> list[dict[str, str]]:
-    """Introspect the server with placeholder credentials so the account tools register."""
-    os.environ.setdefault("DELTA_API_KEY", "placeholder")
-    os.environ.setdefault("DELTA_API_SECRET", "placeholder")
+    """Introspect the server to list what the bundle ships.
+
+    The environment is forced rather than defaulted so the manifest depends only on the
+    source being packaged. Building from a shell with DELTA_MCP_MODE=trade would otherwise
+    advertise 13 mutation tools the packaged runtime never registers, and real exported
+    credentials would be read at build time for no reason.
+    """
+    os.environ["DELTA_MCP_MODE"] = "read"
+    os.environ["DELTA_API_KEY"] = "placeholder"
+    os.environ["DELTA_API_SECRET"] = "placeholder"
     from delta_exchange_mcp.server import build_server
 
     tools = await build_server().list_tools()
