@@ -23,12 +23,16 @@ if [[ ! -f "$BUILT" ]]; then
   git -C "$CACHE/$MCPB_SHA" remote add origin https://github.com/modelcontextprotocol/mcpb.git
   git -C "$CACHE/$MCPB_SHA" fetch -q --depth 1 origin "$MCPB_SHA"
   git -C "$CACHE/$MCPB_SHA" checkout -q FETCH_HEAD
-  npm --prefix "$CACHE/$MCPB_SHA" install --silent --no-audit --no-fund >&2
+  # Install with the yarn release upstream vendors in the repo, against the yarn.lock it
+  # commits, so every transitive dependency is fixed by the same commit we pinned. npm
+  # would ignore that lockfile and resolve the tree fresh at build time — which is exactly
+  # the code that then handles the signing certificate and private key.
+  ( cd "$CACHE/$MCPB_SHA" && node .yarn/releases/yarn-*.cjs install --immutable ) >&2
 
   # `tsc` reports one pre-existing type error upstream (node-forge Buffer in sign.ts) but
   # still emits. Tolerate the exit code, then require the output to exist and run — if it
   # did not emit, that check fails rather than silently using a stale or missing CLI.
-  npm --prefix "$CACHE/$MCPB_SHA" run build:code --silent >&2 || true
+  ( cd "$CACHE/$MCPB_SHA" && ./node_modules/.bin/tsc ) >&2 || true
 fi
 
 if [[ ! -f "$BUILT" ]]; then

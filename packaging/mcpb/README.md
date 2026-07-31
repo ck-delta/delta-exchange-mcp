@@ -100,9 +100,14 @@ uses `--frozen`, so the dependency tree cannot re-resolve on a user's machine.
   never released — npm has had no publish since 2025-12-04.
 
   `mcpb_cli.sh` therefore builds the CLI from a pinned upstream commit that carries the
-  fix, and `build.sh` and `sign.py` both use that. Pinning a commit SHA is also the
-  integrity control: a SHA is a hash of the tree, which an npm version range is not. Bump
-  it deliberately; never point it at a moving ref.
+  fix, and `build.sh` and `sign.py` both use that. Bump the SHA deliberately; never point
+  it at a moving ref.
+
+  The pin covers the dependencies too. Upstream vendors its own yarn release at
+  `.yarn/releases/` and commits `yarn.lock`, so installing with that binary and
+  `--immutable` fixes all 605 transitive packages to the same commit. Do not substitute
+  `npm install` — it ignores a yarn lockfile and resolves the tree fresh at build time,
+  which is the code that then handles the signing certificate and private key.
 
   ```bash
   uv run --no-project python packaging/mcpb/sign.py <bundle.mcpb> cert.pem key.pem [chain.pem]
