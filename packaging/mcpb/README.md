@@ -35,10 +35,15 @@ market data only.
 
 ## Decisions
 
-**Read-only.** `DELTA_MCP_MODE` is deliberately absent, so the bundle registers market
-data plus account reads and no mutations. Trading stays on the manual-config path, where
-the friction of editing a file is doing real safety work — the trading tools have no
-notional cap, and `place_order` sizes in contracts rather than coins.
+**Read-only.** The manifest pins `DELTA_MCP_MODE=read`, so the bundle registers market data
+plus account reads and no mutations. It is pinned rather than omitted on purpose: the client
+merges the manifest's environment over the one it was launched with, so leaving the variable
+out lets an ambient `DELTA_MCP_MODE=trade` register all 13 mutation tools in a bundle whose
+description promises it cannot place orders.
+
+Trading stays on the manual-config path, where the friction of editing a file is doing real
+safety work — the trading tools have no notional cap, and `place_order` sizes in contracts
+rather than coins.
 
 **`server.type: "uv"`.** Needs `uv` on the machine but no other setup. The alternative,
 `type: "binary"` with a PyInstaller executable, removes that prerequisite entirely but

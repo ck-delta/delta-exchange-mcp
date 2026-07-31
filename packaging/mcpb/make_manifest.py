@@ -11,6 +11,8 @@ LONG_DESCRIPTION = (
     "order books, funding and open-interest history, plus your own positions, orders, "
     "fills and balances.\n\n"
     "**Read-only.** This cannot place, change or cancel orders, and cannot move funds.\n\n"
+    "**Both credential fields or neither.** A key without its matching secret is ignored "
+    "and you get market data only — the two are always used together.\n\n"
     "**Market data needs no setup** — leave the API key and secret empty and everything "
     "except your own account still works.\n\n"
     "**To see your account**, create a key at delta.exchange under Account → API Keys with "
@@ -75,6 +77,10 @@ def manifest(version: str, tools: list[dict[str, str]]) -> dict:
                     "server/main.py",
                 ],
                 "env": {
+                    # Pinned, not omitted: the client merges this over the environment it
+                    # was launched with, so an ambient DELTA_MCP_MODE=trade would otherwise
+                    # register the mutation tools in a bundle that promises read-only.
+                    "DELTA_MCP_MODE": "read",
                     "DELTA_MCP_ENV": "${user_config.environment}",
                     "DELTA_API_KEY": "${user_config.api_key}",
                     "DELTA_API_SECRET": "${user_config.api_secret}",
@@ -94,7 +100,7 @@ def manifest(version: str, tools: list[dict[str, str]]) -> dict:
             "api_secret": {
                 "type": "string",
                 "title": "API secret",
-                "description": "The secret shown when you created the key.",
+                "description": "Required if you filled in the key above.",
                 "sensitive": True,
                 "required": False,
             },

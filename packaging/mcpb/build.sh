@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the one-click .mcpb bundle from the repo source.
 #
-#   bash packaging/mcpb/build.sh            # build + self-sign
-#   SIGN=none bash packaging/mcpb/build.sh  # build unsigned
+#   bash packaging/mcpb/build.sh            # build, unsigned
+#   SIGN=self MCPB_CLI=... bash build.sh    # build + self-sign (see README)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,10 +12,11 @@ REPO="$(cd "$HERE/../.." && pwd)"
 # rejects: it appends the signature past the zip EOCD without updating comment_length.
 # Fixed on mcpb main by PR #204 but never released. Point MCPB_CLI at a main build to
 # sign — see README.
+# Kept as an array so a path containing spaces survives expansion.
 if [[ -n "${MCPB_CLI:-}" ]]; then
-  MCPB="node ${MCPB_CLI}"
+  MCPB=(node "$MCPB_CLI")
 else
-  MCPB="npx --yes @anthropic-ai/mcpb@latest"
+  MCPB=(npx --yes @anthropic-ai/mcpb@latest)
 fi
 VERSION="$(grep -m1 '^version' "$REPO/pyproject.toml" | cut -d'"' -f2)"
 WHEEL="delta_exchange_mcp-${VERSION}-py3-none-any.whl"
@@ -55,8 +56,8 @@ uv run --directory "$HERE" --frozen python make_manifest.py manifest.json "$VERS
 echo "==> packing"
 rm -rf "$HERE/.venv" "$HERE"/*.mcpb
 cd "$HERE"
-$MCPB validate manifest.json 2>&1 | grep -v '^npm notice' || true
-$MCPB pack . "delta-exchange-mcp-${VERSION}.mcpb" 2>&1 | grep -v '^npm notice'
+"${MCPB[@]}" validate manifest.json 2>&1 | grep -v '^npm notice' || true
+"${MCPB[@]}" pack . "delta-exchange-mcp-${VERSION}.mcpb" 2>&1 | grep -v '^npm notice'
 
 if [[ "${SIGN:-none}" == "self" ]]; then
   if [[ -z "${MCPB_CLI:-}" ]]; then
@@ -65,7 +66,7 @@ if [[ "${SIGN:-none}" == "self" ]]; then
     exit 1
   fi
   echo "==> self-signing with the main-built CLI"
-  $MCPB sign "$HERE/delta-exchange-mcp-${VERSION}.mcpb" --self-signed 2>&1 | grep -v '^npm notice'
+  "${MCPB[@]}" sign "$HERE/delta-exchange-mcp-${VERSION}.mcpb" --self-signed 2>&1 | grep -v '^npm notice'
 fi
 
 echo
