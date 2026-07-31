@@ -91,7 +91,15 @@ Restart Cursor or open **Settings → Tools & MCP** to refresh.
 
 ### Codex CLI
 
-Add to `~/.codex/config.toml`:
+```bash
+codex mcp add delta-exchange-mcp \
+  --env DELTA_MCP_ENV=india_prod \
+  --env DELTA_API_KEY=your-api-key \
+  --env DELTA_API_SECRET=your-api-secret \
+  -- uvx delta-exchange-mcp
+```
+
+Verify with `codex mcp list`. Or write `~/.codex/config.toml` by hand:
 
 ```toml
 [mcp_servers.delta-exchange-mcp]
