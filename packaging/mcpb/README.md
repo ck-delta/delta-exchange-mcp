@@ -75,10 +75,14 @@ rsvg-convert -w 512 -h 512 favicon.svg -o icon.png
 Double-click the `.mcpb`, or drag it onto Claude Desktop. Leave the API fields empty for
 market data only.
 
-The first install of any `uv` bundle is slow and needs network: Claude Desktop fetches `uv`,
-then runs `uv sync` to fetch a Python interpreter and the dependencies. It surfaces that as
-download progress. Later installs reuse the same binary, on macOS under
-`~/Library/Application Support/Claude/uv-runtime/`.
+The first install of any `uv` bundle needs network and can be slow: the host resolves `uv`,
+then runs `uv sync`, which fetches a Python interpreter and the dependencies. It surfaces
+that as download progress.
+
+The extension lands in `~/Library/Application Support/Claude/Claude Extensions/`, one
+directory per extension, with the `.venv` that `uv sync` built alongside the shipped payload.
+That directory and the app's own log are where to look when a bundle installs but will not
+start.
 
 ## Decisions
 
@@ -95,14 +99,14 @@ safety work — the trading tools have no notional cap, and `place_order` sizes 
 rather than coins.
 
 **`server.type: "uv"`.** No prerequisite on the user's machine — not `uv`, and not Python.
-Claude Desktop downloads `uv` from the `astral-sh/uv` releases into its own `uv-runtime`
-directory, clears the macOS quarantine attribute, then runs `uv sync` against the
-`pyproject.toml` and `uv.lock` shipped inside the bundle to build the virtualenv. Where the
-manifest says `"command": "uv"` the app discards that string and launches the absolute path
-to the binary it fetched, so nothing resolves against the user's `PATH` — which matters,
-because a desktop app started from Finder inherits the launchd environment rather than a
-shell one. It also lets `uv` fetch an interpreter meeting the `>=3.12` floor unless a host
-feature flag forbids downloads.
+Claude Desktop resolves `uv` in three steps: it looks for a system installation, else reuses
+a copy it downloaded earlier under `uv-runtime/`, else downloads one from the `astral-sh/uv`
+releases and clears the macOS quarantine attribute. It then runs `uv sync` against the
+`pyproject.toml` and `uv.lock` shipped inside the bundle, letting `uv` fetch an interpreter
+meeting the `>=3.12` floor rather than requiring a system Python. Where the manifest says
+`"command": "uv"` the app discards that string and launches whichever binary it resolved, by
+absolute path — so nothing resolves against the user's `PATH` at launch, which matters
+because an app started from Finder inherits the launchd environment rather than a shell one.
 
 That removes the reason to consider `type: "binary"` with a PyInstaller executable. That
 option existed only to drop a `uv` prerequisite which turns out not to exist, and it would
@@ -156,11 +160,14 @@ is generated alongside the shipped `pyproject.toml` and so agrees with it.
   Upstream issues [#277](https://github.com/modelcontextprotocol/mcpb/issues/277) and
   [#21](https://github.com/modelcontextprotocol/mcpb/issues/21) (open since 2025-06-28).
   Never gate CI on `mcpb verify`; `verify.py` is the structural check that actually works.
-- **Only Claude Desktop's `uv` provisioning is confirmed.** The behaviour described under
-  Decisions was read out of Claude Desktop's own application bundle (build dated 2026-07-24):
-  a per-platform table of `astral-sh/uv` release URLs, an `ensureUvBinary` step, and a launch
-  path that substitutes the downloaded binary for the manifest's `command`. It is observable
-  at runtime in the app's logs as `[UV Runtime] Setting up UV environment` and
-  `[MCP Launch] [UV Runtime] Launching:`. Claude Code and MCP for Windows also accept
-  `.mcpb`, but whether they provision `uv` the same way is unverified — and
-  `compatibility.runtimes.python` is what surfaces the requirement if one of them does not.
+- **Only Claude Desktop's `uv` provisioning is confirmed, and only its discovery branch.**
+  A real install on macOS (2026-07-31, app build 2026-07-24) logged `[UV Runtime] Running uv
+  sync`, then `[UV Discovery] ✓ Found system UV: /opt/homebrew/bin/uv`, then `[MCP Launch]
+  [UV Runtime] Launching: /opt/homebrew/bin/uv`, and produced a `.venv` on a `uv`-downloaded
+  CPython 3.13.13 rather than a system one — so the no-Python-prerequisite claim is observed,
+  not inferred. The download fallback is read from the app bundle (a per-platform table of
+  `astral-sh/uv` release URLs behind the discovery step) and has **not** been exercised here,
+  because this machine already had `uv`. To test it, remove `uv` from where the app searches
+  and reinstall. Claude Code and MCP for Windows also accept `.mcpb`, but whether they
+  provision `uv` the same way is unverified, and `compatibility.runtimes.python` is what
+  surfaces the requirement if one of them does not.
