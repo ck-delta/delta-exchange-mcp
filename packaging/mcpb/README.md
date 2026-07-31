@@ -49,16 +49,20 @@ until all of this passes:
 - the archive is valid to a **strict** zip parser, which is what Claude Desktop uses
 - the packed payload is **exactly** the expected file set, so build tooling sitting beside
   it in this directory cannot leak in through a missed `.mcpbignore` rule
-- a real MCP **handshake** against a fresh unpack — `initialize`, then `tools/list`
-- **no mutation tool registered** in that handshake
+- two real MCP **handshakes** against a fresh unpack — `initialize`, then `tools/list`
+- **the form decides the mode, not the environment**: accepting the declared default
+  registers no mutation tool even when the ambient environment says `DELTA_MCP_MODE=trade`
+- **the opt-in works**: `trade` reaches all 13 mutation tools, so the field is not decorative
+- **nothing undeclared**: every tool the server registers appears in the manifest, which is
+  what `tools_generated: false` promises
 
-The last check is weaker than it reads and should be strengthened. The handshake starts the
-server with no credentials in the environment, and the mutation tools are gated on credentials
-*and* `DELTA_MCP_MODE=trade`, so they could not have registered whichever mode was set. It
-reports 14 tools and 0 mutating; a real install with a key reports 27 and 0. To make it a
-genuine test the handshake has to start from a hostile environment — credentials present,
-`DELTA_MCP_MODE=trade` — with the manifest's `env` applied over it the way a host does. That
-version fails if the pin below is ever dropped. This one cannot.
+Both handshakes start from a deliberately hostile environment — `DELTA_MCP_MODE=trade` and
+credentials exported — and then apply the manifest's `env` over it with `${user_config.x}`
+resolved the way a host resolves it. That is what makes the first check meaningful. An earlier
+version simply launched the server with no credentials and asserted zero mutations, which
+passed because mutation tools are gated on credentials *and* trade mode: it could not have
+failed. Confirm any change here still fails when `DELTA_MCP_MODE` is removed from the
+manifest's `env`, which is the bug the check exists to catch.
 
 ## The icon
 
@@ -86,17 +90,20 @@ start.
 
 ## Decisions
 
-**Read-only.** The manifest pins `DELTA_MCP_MODE=read`, so the bundle registers market data
-plus account reads and no mutations. It is pinned rather than omitted deliberately. If a host
-merges the manifest's environment over the one it was launched with, which is the substitution
-model the spec describes, then omitting the variable lets an ambient `DELTA_MCP_MODE=trade`
-register all 13 mutation tools in a bundle whose description promises it cannot place orders.
-Pinning costs nothing and does not depend on knowing which way any particular host resolves
-that, so it holds either way.
+**Trading is present but opt-in.** `DELTA_MCP_MODE` is a `user_config` field defaulting to
+`read`, substituted into the launch environment as `${user_config.mode}`. Someone who accepts
+the form gets 27 tools and no mutations; someone who types `trade` gets 41 and can place real
+orders. `user_config` has no enum type — only string, number, boolean, directory and file —
+so this is a free-text string, the same shape as the `environment` field beside it.
 
-Trading stays on the manual-config path, where the friction of editing a file is doing real
-safety work — the trading tools have no notional cap, and `place_order` sizes in contracts
-rather than coins.
+Declaring the variable matters as much as its default. Leaving it out of the manifest entirely
+would let an ambient `DELTA_MCP_MODE=trade` in the environment the app was launched with reach
+the server and arm trading without the user choosing it. `verify.py` reproduces exactly that
+and fails on it.
+
+The default is `read` rather than `trade` because a bundle is a double-click and a form, so
+whatever the default is becomes what most people run — and these tools have no notional cap,
+size orders in contracts rather than coins, and act on the live exchange.
 
 **`server.type: "uv"`.** No prerequisite on the user's machine — not `uv`, and not Python.
 Claude Desktop resolves `uv` in three steps: it looks for a system installation, else reuses

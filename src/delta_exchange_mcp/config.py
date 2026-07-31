@@ -50,13 +50,16 @@ class Config:
 
 
 def load() -> Config:
-    env = os.environ.get("DELTA_MCP_ENV", DEFAULT_ENV).lower()
+    # Empty falls back to the default rather than failing. A bundle substitutes every
+    # declared variable whether or not the user filled the field in, so a cleared input
+    # arrives as "" where a hand-written config would simply omit the variable.
+    env = os.environ.get("DELTA_MCP_ENV", "").strip().lower() or DEFAULT_ENV
     if env not in BASE_URLS:
         raise ValueError(
             f"DELTA_MCP_ENV must be one of {sorted(BASE_URLS)}, got {env!r}"
         )
 
-    mode = os.environ.get("DELTA_MCP_MODE", DEFAULT_MODE).strip().lower()
+    mode = os.environ.get("DELTA_MCP_MODE", "").strip().lower() or DEFAULT_MODE
     if mode not in MODES:
         raise ValueError(f"DELTA_MCP_MODE must be one of {sorted(MODES)}, got {mode!r}")
 

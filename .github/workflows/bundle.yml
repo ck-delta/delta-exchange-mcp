@@ -67,7 +67,14 @@ jobs:
           name: delta-exchange-mcp-bundle
       # `gh` ships on the runner, so the only step holding contents:write runs no
       # third-party code at all. Stronger than pinning a third-party action to a commit.
-      - run: gh release upload "$TAG" ./*.mcpb --clobber
+      #
+      # Uploaded twice: the versioned name is the archival record, and the unversioned copy
+      # is what /releases/latest/download/ can address, since that URL needs an asset name
+      # that does not change between releases. The README download link points at the alias.
+      - run: |
+          versioned=$(ls ./*.mcpb)
+          cp "$versioned" delta-exchange-mcp.mcpb
+          gh release upload "$TAG" "$versioned" delta-exchange-mcp.mcpb --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

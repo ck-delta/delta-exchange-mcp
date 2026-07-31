@@ -26,6 +26,20 @@ def test_invalid_env_rejected(monkeypatch):
         config_mod.load()
 
 
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_env_and_mode_fall_back_to_defaults(monkeypatch, value):
+    """A bundle substitutes every declared variable, so a cleared form field arrives blank.
+
+    Treating that as invalid stopped the server from starting at all, which is a worse
+    outcome than the default — and for mode the default is also the safe direction.
+    """
+    monkeypatch.setenv("DELTA_MCP_ENV", value)
+    monkeypatch.setenv("DELTA_MCP_MODE", value)
+    cfg = config_mod.load()
+    assert cfg.env == "india_prod"
+    assert cfg.mode == "read"
+
+
 def test_credentials_loaded_from_env(monkeypatch):
     monkeypatch.setenv("DELTA_API_KEY", "k")
     monkeypatch.setenv("DELTA_API_SECRET", "s")

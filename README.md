@@ -220,7 +220,22 @@ Leave both prompts empty for public-data-only mode.
 
 ### Claude Desktop
 
-Open **Settings → Developer → Edit config**, or edit directly at:
+[![Download for Claude Desktop](https://img.shields.io/badge/Claude_Desktop-Download_bundle-D97757?style=flat-square&logo=claude&logoColor=white)](https://github.com/delta-exchange/delta-exchange-mcp/releases/latest/download/delta-exchange-mcp.mcpb)
+
+Download that file and double-click it. Claude Desktop asks for the environment and,
+optionally, your API key and secret in a form, then installs the server — no config file,
+and **no need to install `uv` or Python first**: the app fetches both itself. Unlike the
+Cursor and VS Code badges above, this is a file download rather than a link that configures
+your editor; bundles are read only by Claude Desktop, Claude Code, and MCP for Windows.
+
+Leave the credential fields empty for market data only. **Mode** defaults to `read`, which
+cannot place, change or cancel orders. Set it to `trade` to enable the mutation tools — that
+places real orders on the environment you picked, with no size limit and sizes expressed in
+contracts rather than coins, so leave it alone unless that is what you want. Trading also
+needs a key with trading permission, not just Read Data.
+
+To configure by hand instead — which is also how you pin a specific version — open
+**Settings → Developer → Edit config**, or edit directly at:
 
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`

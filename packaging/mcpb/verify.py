@@ -6,6 +6,8 @@ fails here rather than on someone's machine.
 """
 
 import json
+import os
+import re
 import shutil
 import struct
 import subprocess
@@ -73,7 +75,34 @@ def check_archive(mcpb: Path) -> None:
     print(f"  payload: {', '.join(sorted(required))}, {wheels.pop()}")
 
 
-def handshake(extracted: Path, timeout: float = 240.0) -> list[str]:
+def launch_env(manifest: dict, mode: str) -> dict[str, str]:
+    """The environment a host would build, over a deliberately hostile one.
+
+    The ambient half sets DELTA_MCP_MODE=trade and supplies credentials, which is what a
+    machine with those exported looks like. The manifest half is then applied on top with
+    ${user_config.x} resolved the way the host resolves it. Checking the result is what
+    makes "the form decides the mode, not the environment" an actual test rather than an
+    assertion that passes because no credentials were present.
+    """
+    config = {k: v.get("default", "") for k, v in manifest["user_config"].items()}
+    config.update({"mode": mode, "api_key": "placeholder", "api_secret": "placeholder"})
+
+    env = dict(os.environ)
+    env.update({
+        "DELTA_MCP_MODE": "trade",
+        "DELTA_API_KEY": "ambient",
+        "DELTA_API_SECRET": "ambient",
+    })
+    for key, raw in manifest["server"]["mcp_config"]["env"].items():
+        env[key] = re.sub(
+            r"\$\{user_config\.(\w+)\}", lambda m: str(config.get(m.group(1), "")), raw
+        )
+    return env
+
+
+def handshake(
+    extracted: Path, env: dict[str, str] | None = None, timeout: float = 240.0
+) -> list[str]:
     """Start the unpacked server over stdio and return the tool names it registers."""
     proc = subprocess.Popen(
         ["uv", "run", "--directory", str(extracted), "--frozen", "python", "server/main.py"],
@@ -82,6 +111,7 @@ def handshake(extracted: Path, timeout: float = 240.0) -> list[str]:
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        env=env,
     )
 
     def send(msg: dict) -> None:
@@ -147,16 +177,36 @@ def main() -> None:
     try:
         with zipfile.ZipFile(mcpb) as z:
             z.extractall(tmp)
-        names = handshake(tmp)
-        mutating = [n for n in names if n.startswith(MUTATION_PREFIXES)]
-        print(f"  tools: {len(names)} registered, {len(mutating)} mutating")
-        if mutating:
+        manifest = json.loads((tmp / "manifest.json").read_text())
+
+        # Someone who accepted the form's defaults, on a machine whose environment is
+        # already asking for trade mode. The declared default has to win.
+        default = handshake(tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"]))
+        leaked = [n for n in default if n.startswith(MUTATION_PREFIXES)]
+        print(f"  default mode: {len(default)} tools, {len(leaked)} mutating")
+        if leaked:
             raise SystemExit(
-                "read-only contract broken: the bundle registered "
-                f"{', '.join(mutating[:5])}"
+                "the default install can mutate: an ambient DELTA_MCP_MODE=trade reached "
+                f"the server and registered {', '.join(leaked[:5])}"
             )
-        if not names:
+        if not default:
             raise SystemExit("no tools registered")
+
+        # And the opt-in has to actually reach trading, or the field is decorative.
+        opted = handshake(tmp, launch_env(manifest, "trade"))
+        mutating = [n for n in opted if n.startswith(MUTATION_PREFIXES)]
+        print(f"  mode=trade:   {len(opted)} tools, {len(mutating)} mutating")
+        if not mutating:
+            raise SystemExit("opting into trade registered no mutation tools")
+
+        # tools_generated is false, which promises the manifest lists everything reachable.
+        declared = {t["name"] for t in manifest["tools"]}
+        undeclared = set(opted) - declared
+        if undeclared:
+            raise SystemExit(
+                "manifest declares tools_generated=false but the server registers "
+                f"undeclared tools: {', '.join(sorted(undeclared)[:5])}"
+            )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
