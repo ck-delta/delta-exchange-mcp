@@ -3,6 +3,8 @@ name = "delta-exchange-mcp"
 version = "0.4.2"
 description = "Official MCP server for Delta Exchange India — market data and account read for AI assistants."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Anuj Sharma", email = "anuj.sharma@delta.exchange" }
 ]
@@ -12,6 +14,12 @@ dependencies = [
     "mcp>=1.12.4,<2",
     "pydantic>=2.13.2,<3",
 ]
+
+[project.urls]
+Homepage = "https://www.delta.exchange"
+Repository = "https://github.com/delta-exchange/delta-exchange-mcp"
+Documentation = "https://github.com/delta-exchange/delta-exchange-mcp#readme"
+Issues = "https://github.com/delta-exchange/delta-exchange-mcp/issues"
 
 [project.scripts]
 delta-exchange-mcp = "delta_exchange_mcp:main"

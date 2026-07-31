@@ -1,0 +1,63 @@
+name: Bundle
+
+on:
+  pull_request:
+    paths:
+      - "packaging/mcpb/**"
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/bundle.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv publishes no moving major tag past v7, so pin the exact release.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      # The mcpb CLI is Node; build.sh reaches it through npx.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Builds the wheel, derives the bundle project from pyproject.toml, locks, generates
+      # the manifest, packs, then verifies: archive structure, the exact packed payload, a
+      # real MCP handshake, and that no mutation tool registered.
+      - run: bash packaging/mcpb/build.sh
+
+      # manifest.json is committed so the shipped contract is reviewable in a diff. If a
+      # rebuild would change it, the committed copy is stale — regenerate and commit.
+      - name: Check the committed manifest is current
+        run: git diff --exit-code -- packaging/mcpb/manifest.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: delta-exchange-mcp-bundle
+          path: packaging/mcpb/*.mcpb
+          if-no-files-found: error
+
+  attach:
+    needs: bundle
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: delta-exchange-mcp-bundle
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: "*.mcpb"
