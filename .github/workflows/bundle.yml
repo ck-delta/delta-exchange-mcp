@@ -27,15 +27,22 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
-      # The mcpb CLI is Node; build.sh reaches it through npx.
+      # The mcpb CLI is Node, and build.sh compiles it from a pinned upstream commit
+      # (mcpb_cli.sh) because the published release signs bundles Claude Desktop refuses.
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - uses: actions/cache@v6
+        with:
+          path: .mcpb-cli
+          key: mcpb-cli-${{ hashFiles('packaging/mcpb/mcpb_cli.sh') }}
 
       # Builds the wheel, derives the bundle project from pyproject.toml, locks, generates
       # the manifest, packs, then verifies: archive structure, the exact packed payload, a
       # real MCP handshake, and that no mutation tool registered.
       - run: bash packaging/mcpb/build.sh
+        env:
+          MCPB_CLI_CACHE: ${{ github.workspace }}/.mcpb-cli
 
       # manifest.json is committed so the shipped contract is reviewable in a diff. If a
       # rebuild would change it, the committed copy is stale — regenerate and commit.

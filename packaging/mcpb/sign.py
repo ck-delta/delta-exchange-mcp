@@ -1,15 +1,18 @@
-"""Sign a .mcpb with the published CLI, then declare the signature in the archive itself.
+"""Sign a built .mcpb with the pinned upstream mcpb CLI, then check the result is valid.
 
-`mcpb sign` appends its signature block (`MCPB_SIG_V1` + length + PKCS#7 + `MCPB_SIG_END`)
-past the zip end-of-central-directory record, but leaves that record's comment-length field
-at zero. The result is not a strictly valid zip: lenient readers skip the orphaned bytes,
-while Claude Desktop's strict reader refuses the file with "Invalid comment length".
+The published npm CLI (2.1.2) appends its signature block past the zip end-of-central-
+directory record without updating that record's comment-length field, producing an archive
+that strict readers — Claude Desktop among them — refuse with "Invalid comment length".
+Upstream fixed that in PR #204, which has never been released.
 
-Upstream fixed this on `mcpb` main in PR #204, which has never been released — the npm
-package has had no publish since 2025-12-04. Rather than build an unreleased branch of
-someone else's tool in order to sign a release artifact, sign with the published CLI and
-then set the two-byte field here. The signature block is untouched; `extractSignatureBlock`
-scans backwards for the footer magic and never reads this field.
+`mcpb_cli.sh` builds the CLI from a pinned commit that carries the fix, so signing is done
+by upstream's own corrected implementation rather than by patching its output here. The
+pinned SHA is also the integrity control: it is a hash of the tree, which an npm version
+range is not.
+
+Note the built CLI still reports `--version` 2.1.2, because main was never version-bumped.
+Never read the version string as evidence the fix is present — the structural check below,
+and `verify.py`, are what actually establish it.
 
     https://github.com/modelcontextprotocol/mcpb/issues/278
 """
@@ -19,34 +22,26 @@ import subprocess
 import sys
 from pathlib import Path
 
-from make_bundle import MCPB_CLI_VERSION
-
-SIG_HEADER = b"MCPB_SIG_V1"
+HERE = Path(__file__).resolve().parent
 EOCD_MAGIC = b"PK\x05\x06"
-EOCD_COMMENT_LEN_OFFSET = 20
 EOCD_FIXED_SIZE = 22
 
 
-def declare_trailing_bytes(mcpb: Path) -> int:
-    """Set the EOCD comment length to cover everything appended after it."""
-    raw = bytearray(mcpb.read_bytes())
+def mcpb_cli() -> str:
+    """Path to the CLI built from the pinned upstream commit."""
+    built = subprocess.run(
+        ["bash", str(HERE / "mcpb_cli.sh")], check=True, capture_output=True, text=True
+    )
+    return built.stdout.strip()
 
-    # Search for the EOCD *before* the signature block: the PKCS#7 payload is arbitrary
-    # bytes and could otherwise contain a false end-of-central-directory magic.
-    sig = raw.rfind(SIG_HEADER)
-    eocd = raw.rfind(EOCD_MAGIC, 0, sig if sig != -1 else len(raw))
-    if eocd == -1:
-        raise SystemExit("no end-of-central-directory record found")
 
+def signature_is_declared(mcpb: Path) -> bool:
+    """A signed bundle must declare its trailing bytes or strict zip readers reject it."""
+    raw = mcpb.read_bytes()
+    eocd = raw.rfind(EOCD_MAGIC)
+    declared = struct.unpack("<H", raw[eocd + 20 : eocd + 22])[0]
     trailing = len(raw) - (eocd + EOCD_FIXED_SIZE)
-    if trailing == 0:
-        raise SystemExit("nothing was appended — did signing run?")
-    if trailing > 0xFFFF:
-        raise SystemExit(f"signature block is {trailing} bytes, too large for a zip comment")
-
-    struct.pack_into("<H", raw, eocd + EOCD_COMMENT_LEN_OFFSET, trailing)
-    mcpb.write_bytes(raw)
-    return trailing
+    return trailing > 0 and declared == trailing
 
 
 def main() -> None:
@@ -54,16 +49,20 @@ def main() -> None:
     cert, key = sys.argv[2], sys.argv[3]
     intermediate = sys.argv[4] if len(sys.argv) > 4 else None
 
-    cmd = ["npx", "--yes", f"@anthropic-ai/mcpb@{MCPB_CLI_VERSION}", "sign", str(mcpb),
-           "--cert", cert, "--key", key]
+    cmd = ["node", mcpb_cli(), "sign", str(mcpb), "--cert", cert, "--key", key]
     if intermediate:
         cmd += ["--intermediate", intermediate]
     subprocess.run(cmd, check=True)
 
-    declared = declare_trailing_bytes(mcpb)
-    print(f"  declared {declared}-byte signature block in the archive comment length")
+    if not signature_is_declared(mcpb):
+        raise SystemExit(
+            "the signed bundle does not declare its signature in the archive comment "
+            "length, so Claude Desktop will refuse it. The CLI that ran does not carry "
+            "the PR #204 fix — check mcpb_cli.sh."
+        )
+    print("  signed; the archive declares the signature block")
     print("  note: `mcpb verify` cannot confirm this — node-forge never implemented")
-    print("        PKCS#7 verification. Use verify.py for the structural check.")
+    print("        PKCS#7 verification. verify.py is the structural check.")
 
 
 if __name__ == "__main__":

@@ -13,8 +13,9 @@ REPO="$(cd "$HERE/../.." && pwd)"
 PY=(uv run --no-project python)
 
 VERSION="$("${PY[@]}" "$HERE/make_bundle.py" version)"
-# Pinned rather than @latest: this packs the artifact we attach to a release.
-MCPB=(npx --yes "@anthropic-ai/mcpb@$("${PY[@]}" "$HERE/make_bundle.py" mcpb-cli-version)")
+# Built from a pinned upstream commit, not the npm release — the published CLI signs
+# bundles Claude Desktop refuses. See mcpb_cli.sh.
+MCPB=(node "$(bash "$HERE/mcpb_cli.sh")")
 OUT="$HERE/delta-exchange-mcp-${VERSION}.mcpb"
 
 echo "==> building wheel ${VERSION}"

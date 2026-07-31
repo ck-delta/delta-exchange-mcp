@@ -23,7 +23,8 @@ local build and a release build are the same build.
 | `build.sh` | Orchestration: wheel, project, lock, manifest, pack, verify. |
 | `make_bundle.py` | Generates `pyproject.toml` and `manifest.json`. **Edit copy here.** |
 | `verify.py` | Checks a built bundle. Run by `build.sh` and by CI. |
-| `sign.py` | Signs, then declares the signature in the archive (see Caveats). |
+| `mcpb_cli.sh` | Builds the mcpb CLI from a pinned upstream commit (see Caveats). |
+| `sign.py` | Signs with that CLI, then checks the archive declares the signature. |
 | `manifest.json` | Generated, **committed** — the user-facing contract. CI fails if stale. |
 | `pyproject.toml`, `uv.lock`, `wheels/`, `*.mcpb` | Generated, not committed. |
 
@@ -88,29 +89,35 @@ uses `--frozen`, so the dependency tree cannot re-resolve on a user's machine.
 
 ## Caveats
 
-- **The bundle currently ships unsigned, and signing needs `sign.py`, not `mcpb sign`.**
-  `@anthropic-ai/mcpb@2.1.2` (published 2025-12-04) appends the PKCS#7 blob *after* the zip
+- **Signing uses a CLI built from upstream, not the npm release.** The published
+  `@anthropic-ai/mcpb` (2.1.2, 2025-12-04) appends the PKCS#7 blob past the zip
   end-of-central-directory record but leaves that record's comment-length field at 0.
-  Lenient readers (Python `zipfile`, `unzip`, `mcpb unpack`) skip the orphaned bytes, so the
-  tool's own round-trip looks fine; Claude Desktop uses a strict reader and refuses the file
-  with `Invalid comment length. Expected: 2264. Found: 0`. Reproduced with both
+  Lenient readers (Python `zipfile`, `unzip`) skip the orphaned bytes; Claude Desktop uses
+  a strict reader and refuses the file with `Invalid comment length`. Reproduced with both
   `--self-signed` and a real CA-issued chain. Upstream issue
-  [#278](https://github.com/modelcontextprotocol/mcpb/issues/278).
-
-  Fixed on mcpb `main` by
+  [#278](https://github.com/modelcontextprotocol/mcpb/issues/278), fixed by
   [PR #204](https://github.com/modelcontextprotocol/mcpb/pull/204) (merged 2026-03-18) and
-  never released — npm has had no publish since 2025-12-04. `sign.py` therefore signs with
-  the published CLI and sets the two-byte field itself, rather than building an unreleased
-  branch of someone else's tool in order to sign a release artifact:
+  never released — npm has had no publish since 2025-12-04.
+
+  `mcpb_cli.sh` therefore builds the CLI from a pinned upstream commit that carries the
+  fix, and `build.sh` and `sign.py` both use that. Pinning a commit SHA is also the
+  integrity control: a SHA is a hash of the tree, which an npm version range is not. Bump
+  it deliberately; never point it at a moving ref.
 
   ```bash
   uv run --no-project python packaging/mcpb/sign.py <bundle.mcpb> cert.pem key.pem [chain.pem]
   uv run --no-project python packaging/mcpb/verify.py <bundle.mcpb>
   ```
 
-  This is not wired into CI: it needs a real certificate, which we do not have yet. When one
-  exists, add `MCPB_SIGNING_CERT` / `MCPB_SIGNING_KEY` as repository secrets and a signing
-  step to `bundle.yml` before the upload.
+  Two traps worth knowing. The built CLI still reports `--version` 2.1.2, because upstream
+  never bumped main, so the version string tells you nothing about whether the fix is
+  present — `sign.py` checks the archive structure instead. And `tsc` reports one
+  pre-existing type error upstream while still emitting; `mcpb_cli.sh` tolerates the exit
+  code and then requires the binary to exist and run.
+
+  Signing is not wired into CI: it needs a real certificate, which we do not have yet. When
+  one exists, add `MCPB_SIGNING_CERT` / `MCPB_SIGNING_KEY` as repository secrets and a
+  signing step to `bundle.yml` before the upload.
 
 - **`mcpb verify` cannot confirm any signature.** It calls node-forge's
   `PkcsSignedData.verify()`, which node-forge has never implemented — it always throws, and
