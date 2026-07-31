@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/delta-exchange/.github/main/Banner/image.png" width="560" alt="Delta Exchange">
+<!-- Pinned to the commit that added it: the file is not on main until this stack merges,
+     and a pinned blob stays reachable through the PR ref regardless. -->
+<img src="https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/d49dfba97e57120448bb4e0267abde6d7931e5f1/packaging/mcpb/icon.png" width="88" alt="Delta Exchange">
 
 # delta-exchange-mcp
 
@@ -300,10 +302,10 @@ Leave both prompts empty for public-data-only mode.
 
 </details>
 
-<a id="claude-code"></a>
+### Claude Code
 
 <details>
-<summary><b>Claude Code — CLI one-liner</b></summary>
+<summary><b>CLI one-liner</b></summary>
 
 ```bash
 claude mcp add delta-exchange-mcp \
@@ -318,10 +320,10 @@ claude mcp add delta-exchange-mcp \
 
 </details>
 
-<a id="codex"></a>
+### Codex
 
 <details>
-<summary><b>Codex — CLI one-liner, or the desktop app's form</b></summary>
+<summary><b>CLI one-liner, or the desktop app's form</b></summary>
 
 CLI:
 
@@ -355,10 +357,10 @@ Leave the other fields empty, then restart the app.
 
 </details>
 
-<a id="windsurf"></a>
+### Windsurf
 
 <details>
-<summary><b>Windsurf — JSON config</b></summary>
+<summary><b>JSON config</b></summary>
 
 Add to `~/.codeium/windsurf/mcp_config.json` (macOS / Linux) or `%USERPROFILE%\.codeium\windsurf\mcp_config.json` (Windows). UI route: **Settings → Cascade → Plugins (MCP servers) → Manage Plugins → View raw config**.
 
@@ -380,10 +382,10 @@ Add to `~/.codeium/windsurf/mcp_config.json` (macOS / Linux) or `%USERPROFILE%\.
 
 </details>
 
-<a id="zed"></a>
+### Zed
 
 <details>
-<summary><b>Zed — JSON config</b></summary>
+<summary><b>JSON config</b></summary>
 
 Add to `~/.config/zed/settings.json` (user-level) or `.zed/settings.json` (project-level). Zed uses the top-level key `context_servers` and nests `command` as an object — note the shape difference from other clients:
 
