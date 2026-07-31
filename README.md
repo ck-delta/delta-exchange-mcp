@@ -69,7 +69,11 @@ claude mcp add delta-exchange-mcp \
 
 ### Cursor
 
-Global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). Project-scoped alternative: `.cursor/mcp.json` in the repo root.
+[![Add to Cursor](https://img.shields.io/badge/Cursor-Add_Server-0098FF?style=flat-square)](https://cursor.com/install-mcp?name=delta-exchange-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJkZWx0YS1leGNoYW5nZS1tY3AiXSwiZW52Ijp7IkRFTFRBX01DUF9FTlYiOiJpbmRpYV9wcm9kIiwiREVMVEFfQVBJX0tFWSI6IiIsIkRFTFRBX0FQSV9TRUNSRVQiOiIifX0%3D)
+
+Cursor shows an approval dialog and writes the entry itself. `DELTA_API_KEY` and `DELTA_API_SECRET` arrive **empty**, so the market-data tools work immediately — fill them in, in the entry it creates, to reach your account. They are empty rather than placeholder text on purpose: a non-empty key registers the account tools and then fails every call, whereas an empty one keeps the server cleanly in public-data mode.
+
+To configure by hand instead — global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). Project-scoped alternative: `.cursor/mcp.json` in the repo root.
 
 ```json
 {
@@ -91,7 +95,15 @@ Restart Cursor or open **Settings → Tools & MCP** to refresh.
 
 ### Codex CLI
 
-Add to `~/.codex/config.toml`:
+```bash
+codex mcp add delta-exchange-mcp \
+  --env DELTA_MCP_ENV=india_prod \
+  --env DELTA_API_KEY=your-api-key \
+  --env DELTA_API_SECRET=your-api-secret \
+  -- uvx delta-exchange-mcp
+```
+
+Verify with `codex mcp list`. Or write `~/.codex/config.toml` by hand:
 
 ```toml
 [mcp_servers.delta-exchange-mcp]
@@ -157,24 +169,54 @@ Add to `~/.config/zed/settings.json` (user-level) or `.zed/settings.json` (proje
 
 ### VS Code (GitHub Copilot)
 
-Add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and each entry needs an explicit `"type": "stdio"`:
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D)
+[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D&quality=insiders)
+
+VS Code prompts for the key and secret with the input masked, offers the environment as a
+dropdown, and writes the entry itself — nothing to edit afterwards. Leave both credential
+prompts empty for public-data-only mode.
+
+To configure by hand instead, add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and each entry needs an explicit `"type": "stdio"`. Declaring the credentials as `inputs` means VS Code prompts for them once and stores them itself, so your secret never lands in a file you might commit — and `pickString` makes the environment a dropdown rather than free text you could typo:
 
 ```json
 {
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "delta-api-key",
+      "description": "Delta API key (leave empty for market data only)",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "delta-api-secret",
+      "description": "Delta API secret (must match the key)",
+      "password": true
+    },
+    {
+      "type": "pickString",
+      "id": "delta-env",
+      "description": "Delta Exchange environment",
+      "options": ["india_prod", "india_testnet"],
+      "default": "india_prod"
+    }
+  ],
   "servers": {
     "delta-exchange-mcp": {
       "type": "stdio",
       "command": "uvx",
       "args": ["delta-exchange-mcp"],
       "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
+        "DELTA_MCP_ENV": "${input:delta-env}",
+        "DELTA_API_KEY": "${input:delta-api-key}",
+        "DELTA_API_SECRET": "${input:delta-api-secret}"
       }
     }
   }
 }
 ```
+
+Leave both prompts empty for public-data-only mode.
 
 ### Claude Desktop
 
