@@ -35,7 +35,16 @@ uv run --directory "$HERE" --frozen python make_bundle.py manifest
 echo "==> packing"
 rm -rf "$HERE/.venv" "$HERE"/*.mcpb
 cd "$HERE"
-"${MCPB[@]}" validate manifest.json 2>&1 | grep -v '^npm notice' || true
+# Check validate's own exit status, not the pipeline's. Piping through grep and adding
+# `|| true` — to stop grep's "no lines matched" exit killing the build — also swallowed a
+# real rejection, so an invalid manifest would go straight on to be packed.
+if ! validation="$("${MCPB[@]}" validate manifest.json 2>&1)"; then
+  echo "$validation" | grep -v '^npm notice' >&2 || true
+  echo "!!  manifest validation failed — refusing to pack." >&2
+  exit 1
+fi
+echo "$validation" | grep -v '^npm notice' || true
+
 "${MCPB[@]}" pack . "$OUT" 2>&1 | grep -v '^npm notice'
 
 echo "==> verifying"
