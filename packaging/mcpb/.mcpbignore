@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+build.sh
+make_manifest.py
+README.md
+*.mcpb
