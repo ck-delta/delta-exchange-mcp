@@ -150,9 +150,32 @@ is generated alongside the shipped `pyproject.toml` and so agrees with it.
   pre-existing type error upstream while still emitting; `mcpb_cli.sh` tolerates the exit
   code and then requires the binary to exist and run.
 
-  Signing is not wired into CI: it needs a real certificate, which we do not have yet. When
-  one exists, add `MCPB_SIGNING_CERT` / `MCPB_SIGNING_KEY` as repository secrets and a
-  signing step to `bundle.yml` before the upload.
+- **Signing is not wired into CI, and buying a certificate would probably not fix that.**
+  Two independent obstacles, so establish the need before spending anything.
+
+  The tooling wants a private key as a file: `sign.py` passes `--cert cert.pem --key
+  key.pem` through to the CLI. Certificates issued since 2023-06-01 cannot supply one.
+  CA/Browser Forum rules require the key for a code-signing certificate to be generated on,
+  and never leave, hardware certified to FIPS 140 Level 2 or Common Criteria EAL 4+ — a
+  shipped token or an HSM, non-exportable — and CAs withdrew the flow that produced an
+  installable key file. Consuming such a certificate needs HSM or cloud-signing support the
+  CLI does not have, in a repository that has not published to npm since 2025-12-04.
+
+  Nothing checks the result either. `mcpb verify` cannot confirm any signature (see below),
+  and Claude Desktop carries exactly one user-facing string about extension signatures —
+  *"This extension isn't signed. Ask your administrator to allow it or install a signed
+  version."* Its neighbours in the same translation file are all organisation policy:
+  extensions disabled because they are not allowed in the current workspace, extensions
+  blocked by a security blocklist. An ordinary install shows no signature state at all, and
+  the unsigned bundle installs without a warning.
+
+  So signing looks like it matters only for distribution into an enterprise-managed
+  workspace that enforces signed extensions. If that becomes a requirement, test
+  `mcpb sign --self-signed` against the policy first — it is free and yields status
+  `self-signed` rather than `unsigned`. Only if the policy rejects that is a purchased
+  certificate worth pricing, and the key-storage problem above has to be solved before one
+  is useful here. Wiring it up afterwards means repository secrets holding whatever the
+  chosen mechanism needs, plus a signing step in `bundle.yml` before the upload.
 
 - **`mcpb verify` cannot confirm any signature.** It calls node-forge's
   `PkcsSignedData.verify()`, which node-forge has never implemented — it always throws, and
