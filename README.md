@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/main/packaging/mcpb/icon.png" width="96" alt="Delta Exchange logo">
+<img src="https://raw.githubusercontent.com/delta-exchange/.github/main/Banner/image.png" width="560" alt="Delta Exchange">
 
 # delta-exchange-mcp
 
@@ -615,19 +615,19 @@ Please redact `api_key` / `api_secret` from any logs or screenshots before attac
 [beta-badge]: https://img.shields.io/badge/status-beta-orange?style=flat-square
 [pypi-version-badge]: https://img.shields.io/pypi/v/delta-exchange-mcp?style=flat-square
 [pypi-version-link]: https://pypi.org/project/delta-exchange-mcp/
-[cursor-badge]: https://img.shields.io/badge/Cursor-Add_Server-0098FF?style=flat-square
+[cursor-badge]: https://img.shields.io/badge/Cursor-Add_Server-0098FF?style=for-the-badge
 [cursor-link]: https://cursor.com/install-mcp?name=delta-exchange-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJkZWx0YS1leGNoYW5nZS1tY3AiXSwiZW52Ijp7IkRFTFRBX01DUF9FTlYiOiJpbmRpYV9wcm9kIiwiREVMVEFfQVBJX0tFWSI6IiIsIkRFTFRBX0FQSV9TRUNSRVQiOiIifX0%3D
-[vs-code-badge]: https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white
+[vs-code-badge]: https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=for-the-badge&logo=visualstudiocode&logoColor=white
 [vs-code-link]: https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D
-[vs-code-insiders-badge]: https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white
+[vs-code-insiders-badge]: https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=for-the-badge&logo=visualstudiocode&logoColor=white
 [vs-code-insiders-link]: https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D&quality=insiders
-[claude-desktop-badge]: https://img.shields.io/badge/Claude_Desktop-Download_bundle-D97757?style=flat-square&logo=claude&logoColor=white
+[claude-desktop-badge]: https://img.shields.io/badge/Claude_Desktop-Download_bundle-D97757?style=for-the-badge&logo=claude&logoColor=white
 [claude-desktop-link]: https://github.com/delta-exchange/delta-exchange-mcp/releases/latest/download/delta-exchange-mcp.mcpb
-[claude-code-jump-badge]: https://img.shields.io/badge/Claude_Code-setup_below-6e7681?style=flat-square
+[claude-code-jump-badge]: https://img.shields.io/badge/Claude_Code-setup_below-6e7681?style=for-the-badge
 [claude-code-jump-link]: #claude-code
-[codex-jump-badge]: https://img.shields.io/badge/Codex-setup_below-6e7681?style=flat-square
+[codex-jump-badge]: https://img.shields.io/badge/Codex-setup_below-6e7681?style=for-the-badge
 [codex-jump-link]: #codex
-[windsurf-jump-badge]: https://img.shields.io/badge/Windsurf-setup_below-6e7681?style=flat-square
+[windsurf-jump-badge]: https://img.shields.io/badge/Windsurf-setup_below-6e7681?style=for-the-badge
 [windsurf-jump-link]: #windsurf
-[zed-jump-badge]: https://img.shields.io/badge/Zed-setup_below-6e7681?style=flat-square
+[zed-jump-badge]: https://img.shields.io/badge/Zed-setup_below-6e7681?style=for-the-badge
 [zed-jump-link]: #zed
