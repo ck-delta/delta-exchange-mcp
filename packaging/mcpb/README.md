@@ -50,7 +50,15 @@ until all of this passes:
 - the packed payload is **exactly** the expected file set, so build tooling sitting beside
   it in this directory cannot leak in through a missed `.mcpbignore` rule
 - a real MCP **handshake** against a fresh unpack — `initialize`, then `tools/list`
-- **no mutation tool registered**, making the read-only contract a tested invariant
+- **no mutation tool registered** in that handshake
+
+The last check is weaker than it reads and should be strengthened. The handshake starts the
+server with no credentials in the environment, and the mutation tools are gated on credentials
+*and* `DELTA_MCP_MODE=trade`, so they could not have registered whichever mode was set. It
+reports 14 tools and 0 mutating; a real install with a key reports 27 and 0. To make it a
+genuine test the handshake has to start from a hostile environment — credentials present,
+`DELTA_MCP_MODE=trade` — with the manifest's `env` applied over it the way a host does. That
+version fails if the pin below is ever dropped. This one cannot.
 
 ## The icon
 
@@ -67,25 +75,43 @@ rsvg-convert -w 512 -h 512 favicon.svg -o icon.png
 Double-click the `.mcpb`, or drag it onto Claude Desktop. Leave the API fields empty for
 market data only.
 
+The first install of any `uv` bundle is slow and needs network: Claude Desktop fetches `uv`,
+then runs `uv sync` to fetch a Python interpreter and the dependencies. It surfaces that as
+download progress. Later installs reuse the same binary, on macOS under
+`~/Library/Application Support/Claude/uv-runtime/`.
+
 ## Decisions
 
 **Read-only.** The manifest pins `DELTA_MCP_MODE=read`, so the bundle registers market data
-plus account reads and no mutations. It is pinned rather than omitted on purpose: the client
-merges the manifest's environment over the one it was launched with, so leaving the variable
-out lets an ambient `DELTA_MCP_MODE=trade` register all 13 mutation tools in a bundle whose
-description promises it cannot place orders.
+plus account reads and no mutations. It is pinned rather than omitted deliberately. If a host
+merges the manifest's environment over the one it was launched with, which is the substitution
+model the spec describes, then omitting the variable lets an ambient `DELTA_MCP_MODE=trade`
+register all 13 mutation tools in a bundle whose description promises it cannot place orders.
+Pinning costs nothing and does not depend on knowing which way any particular host resolves
+that, so it holds either way.
 
 Trading stays on the manual-config path, where the friction of editing a file is doing real
 safety work — the trading tools have no notional cap, and `place_order` sizes in contracts
 rather than coins.
 
-**`server.type: "uv"`.** Needs `uv` on the machine but no other setup. The alternative,
-`type: "binary"` with a PyInstaller executable, removes that prerequisite entirely but
-costs four platform builds plus Apple notarization. Worth doing only if the `uv`
-prerequisite proves to be where users drop off.
+**`server.type: "uv"`.** No prerequisite on the user's machine — not `uv`, and not Python.
+Claude Desktop downloads `uv` from the `astral-sh/uv` releases into its own `uv-runtime`
+directory, clears the macOS quarantine attribute, then runs `uv sync` against the
+`pyproject.toml` and `uv.lock` shipped inside the bundle to build the virtualenv. Where the
+manifest says `"command": "uv"` the app discards that string and launches the absolute path
+to the binary it fetched, so nothing resolves against the user's `PATH` — which matters,
+because a desktop app started from Finder inherits the launchd environment rather than a
+shell one. It also lets `uv` fetch an interpreter meeting the `>=3.12` floor unless a host
+feature flag forbids downloads.
+
+That removes the reason to consider `type: "binary"` with a PyInstaller executable. That
+option existed only to drop a `uv` prerequisite which turns out not to exist, and it would
+have cost four platform builds plus Apple notarization.
 
 **Dependencies pinned and locked.** `uv.lock` ships inside the bundle and the launch line
-uses `--frozen`, so the dependency tree cannot re-resolve on a user's machine.
+passes `--frozen`, so nothing re-resolves at start-up. The `uv sync` the host runs at install
+time is a separate step and is not `--frozen`, but it consumes that same shipped lock, which
+is generated alongside the shipped `pyproject.toml` and so agrees with it.
 
 ## Caveats
 
@@ -130,5 +156,11 @@ uses `--frozen`, so the dependency tree cannot re-resolve on a user's machine.
   Upstream issues [#277](https://github.com/modelcontextprotocol/mcpb/issues/277) and
   [#21](https://github.com/modelcontextprotocol/mcpb/issues/21) (open since 2025-06-28).
   Never gate CI on `mcpb verify`; `verify.py` is the structural check that actually works.
-- **Whether Claude Desktop supplies `uv` itself is unverified.** If it does not, the user
-  still installs `uv` first, and `compatibility.runtimes.python` is what surfaces that.
+- **Only Claude Desktop's `uv` provisioning is confirmed.** The behaviour described under
+  Decisions was read out of Claude Desktop's own application bundle (build dated 2026-07-24):
+  a per-platform table of `astral-sh/uv` release URLs, an `ensureUvBinary` step, and a launch
+  path that substitutes the downloaded binary for the manifest's `command`. It is observable
+  at runtime in the app's logs as `[UV Runtime] Setting up UV environment` and
+  `[MCP Launch] [UV Runtime] Launching:`. Claude Code and MCP for Windows also accept
+  `.mcpb`, but whether they provision `uv` the same way is unverified — and
+  `compatibility.runtimes.python` is what surfaces the requirement if one of them does not.
