@@ -1,13 +1,21 @@
 # delta-exchange-mcp
 
 ![Status: Beta](https://img.shields.io/badge/status-beta-orange)
-[![PyPI version](https://img.shields.io/pypi/v/delta-exchange-mcp)](https://pypi.org/project/delta-exchange-mcp/)
+[![PyPI version][pypi-version-badge]][pypi-version-link]
 
 Official MCP (Model Context Protocol) server for **Delta Exchange India**. Lets AI assistants (Claude Desktop, Claude Code, Cursor, Zed, Codex) query Delta Exchange market data and your own account (read-only) through standardized tools.
 
 > **Status:** Beta. Functional and used internally, but the tool surface and configuration may still change. Please [open an issue](https://github.com/delta-exchange/delta-exchange-mcp/issues) for bugs, missing tools, or rough edges. Early reports directly shape what ships next.
 
 **What you get:** 14 public market-data tools + 13 authenticated read-only account tools (positions, orders, fills, wallet, stats, leverage, preferences, profile). Trading mutations (place / edit / cancel orders, brackets, leverage, margin, close-all) are available but **off by default** — they register only when you opt in with `DELTA_MCP_MODE=trade` (see [Trading](#trading-opt-in)).
+
+**Install in one click:** [![Download for Claude Desktop][claude-desktop-badge]][claude-desktop-link] [![Add to Cursor][cursor-badge]][cursor-link] [![Install in VS Code][vs-code-badge]][vs-code-link]
+
+Claude Desktop downloads a bundle you double-click, and is the only route needing neither
+`uv` nor Python installed first — the app fetches both. Cursor and VS Code write the config
+for you and prompt for credentials. Every client, including hand-written config for Claude
+Code, Codex, Windsurf and Zed, is covered under
+[Install in your MCP client](#install-in-your-mcp-client).
 
 ---
 
@@ -69,7 +77,7 @@ claude mcp add delta-exchange-mcp \
 
 ### Cursor
 
-[![Add to Cursor](https://img.shields.io/badge/Cursor-Add_Server-0098FF?style=flat-square)](https://cursor.com/install-mcp?name=delta-exchange-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJkZWx0YS1leGNoYW5nZS1tY3AiXSwiZW52Ijp7IkRFTFRBX01DUF9FTlYiOiJpbmRpYV9wcm9kIiwiREVMVEFfQVBJX0tFWSI6IiIsIkRFTFRBX0FQSV9TRUNSRVQiOiIifX0%3D)
+[![Add to Cursor][cursor-badge]][cursor-link]
 
 Cursor shows an approval dialog and writes the entry itself. `DELTA_API_KEY` and `DELTA_API_SECRET` arrive **empty**, so the market-data tools work immediately — fill them in, in the entry it creates, to reach your account. They are empty rather than placeholder text on purpose: a non-empty key registers the account tools and then fails every call, whereas an empty one keeps the server cleanly in public-data mode.
 
@@ -169,8 +177,8 @@ Add to `~/.config/zed/settings.json` (user-level) or `.zed/settings.json` (proje
 
 ### VS Code (GitHub Copilot)
 
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D)
-[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D&quality=insiders)
+[![Install in VS Code][vs-code-badge]][vs-code-link]
+[![Install in VS Code Insiders][vs-code-insiders-badge]][vs-code-insiders-link]
 
 VS Code prompts for the key and secret with the input masked, offers the environment as a
 dropdown, and writes the entry itself — nothing to edit afterwards. Leave both credential
@@ -220,7 +228,7 @@ Leave both prompts empty for public-data-only mode.
 
 ### Claude Desktop
 
-[![Download for Claude Desktop](https://img.shields.io/badge/Claude_Desktop-Download_bundle-D97757?style=flat-square&logo=claude&logoColor=white)](https://github.com/delta-exchange/delta-exchange-mcp/releases/latest/download/delta-exchange-mcp.mcpb)
+[![Download for Claude Desktop][claude-desktop-badge]][claude-desktop-link]
 
 Download that file and double-click it. Claude Desktop asks for the environment and,
 optionally, your API key and secret in a form, then installs the server — no config file,
@@ -550,3 +558,15 @@ Please redact `api_key` / `api_secret` from any logs or screenshots before attac
 - **Auditable mutations.** When trading is on, every mutation is dry-runnable and written to an owner-only audit log; mutations are never auto-retried.
 - **Local stdio only.** Per-user keys never leave your machine; no shared hosted endpoint.
 - **Read the code.** It's a financial-tool MCP; treat it like one.
+
+<!-- Install badges: defined once, used in the row above and in each client's section. -->
+[pypi-version-badge]: https://img.shields.io/pypi/v/delta-exchange-mcp
+[pypi-version-link]: https://pypi.org/project/delta-exchange-mcp/
+[cursor-badge]: https://img.shields.io/badge/Cursor-Add_Server-0098FF?style=flat-square
+[cursor-link]: https://cursor.com/install-mcp?name=delta-exchange-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJkZWx0YS1leGNoYW5nZS1tY3AiXSwiZW52Ijp7IkRFTFRBX01DUF9FTlYiOiJpbmRpYV9wcm9kIiwiREVMVEFfQVBJX0tFWSI6IiIsIkRFTFRBX0FQSV9TRUNSRVQiOiIifX0%3D
+[vs-code-badge]: https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white
+[vs-code-link]: https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D
+[vs-code-insiders-badge]: https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white
+[vs-code-insiders-link]: https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D&quality=insiders
+[claude-desktop-badge]: https://img.shields.io/badge/Claude_Desktop-Download_bundle-D97757?style=flat-square&logo=claude&logoColor=white
+[claude-desktop-link]: https://github.com/delta-exchange/delta-exchange-mcp/releases/latest/download/delta-exchange-mcp.mcpb
