@@ -11,9 +11,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 PY=(uv run --no-project python)
-MCPB=(npx --yes @anthropic-ai/mcpb@latest)
 
 VERSION="$("${PY[@]}" "$HERE/make_bundle.py" version)"
+# Pinned rather than @latest: this packs the artifact we attach to a release.
+MCPB=(npx --yes "@anthropic-ai/mcpb@$("${PY[@]}" "$HERE/make_bundle.py" mcpb-cli-version)")
 OUT="$HERE/delta-exchange-mcp-${VERSION}.mcpb"
 
 echo "==> building wheel ${VERSION}"

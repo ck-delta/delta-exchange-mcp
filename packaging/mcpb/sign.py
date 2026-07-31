@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from make_bundle import MCPB_CLI_VERSION
+
 SIG_HEADER = b"MCPB_SIG_V1"
 EOCD_MAGIC = b"PK\x05\x06"
 EOCD_COMMENT_LEN_OFFSET = 20
@@ -52,7 +54,7 @@ def main() -> None:
     cert, key = sys.argv[2], sys.argv[3]
     intermediate = sys.argv[4] if len(sys.argv) > 4 else None
 
-    cmd = ["npx", "--yes", "@anthropic-ai/mcpb@latest", "sign", str(mcpb),
+    cmd = ["npx", "--yes", f"@anthropic-ai/mcpb@{MCPB_CLI_VERSION}", "sign", str(mcpb),
            "--cert", cert, "--key", key]
     if intermediate:
         cmd += ["--intermediate", intermediate]

@@ -58,6 +58,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: delta-exchange-mcp-bundle
-      - uses: softprops/action-gh-release@v3
-        with:
-          files: "*.mcpb"
+      # `gh` ships on the runner, so the only step holding contents:write runs no
+      # third-party code at all. Stronger than pinning a third-party action to a commit.
+      - run: gh release upload "$TAG" ./*.mcpb --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}

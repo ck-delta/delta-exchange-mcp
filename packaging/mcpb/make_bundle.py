@@ -21,6 +21,12 @@ DISPLAY_NAME = "Delta Exchange"
 PUBLISHER = "Delta Exchange"
 KEYWORDS = ["trading", "crypto", "options", "futures", "market-data"]
 
+# Pinned, never @latest. This package packs the artifact we attach to a release, and
+# sign.py additionally hands it the certificate and private-key paths — mutable registry
+# code has no business in either. sign.py also compensates for a specific defect in this
+# version (see its docstring), so the behaviour it is written against must be fixed too.
+MCPB_CLI_VERSION = "2.1.2"
+
 SHORT_DESCRIPTION = "Live market data and your Delta Exchange India account, read-only."
 
 LONG_DESCRIPTION = (
@@ -180,6 +186,8 @@ def main() -> None:
 
     if what == "version":
         print(proj["version"])
+    elif what == "mcpb-cli-version":
+        print(MCPB_CLI_VERSION)
     elif what == "wheel-name":
         print(wheel_name(proj))
     elif what == "pyproject":
