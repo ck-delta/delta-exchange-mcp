@@ -38,6 +38,16 @@ class Config:
     def has_credentials(self) -> bool:
         return bool(self.api_key and self.api_secret)
 
+    @property
+    def partial_credentials(self) -> bool:
+        """One half of the pair supplied without the other — always a misconfiguration.
+
+        Both are needed to sign a request, so this silently yields public-data mode. It is
+        reported rather than raised: a stray DELTA_API_KEY in someone's shell should not
+        kill an otherwise working market-data server.
+        """
+        return bool(self.api_key) != bool(self.api_secret)
+
 
 def load() -> Config:
     env = os.environ.get("DELTA_MCP_ENV", DEFAULT_ENV).lower()

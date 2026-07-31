@@ -57,3 +57,24 @@ def test_debug_truthy_values(monkeypatch, value):
 def test_debug_falsy_values(monkeypatch, value):
     monkeypatch.setenv("DELTA_MCP_DEBUG", value)
     assert config_mod.load().debug is False
+
+
+@pytest.mark.parametrize(
+    ("key", "secret", "partial"),
+    [
+        ("k", "s", False),
+        (None, None, False),
+        ("k", None, True),
+        (None, "s", True),
+    ],
+)
+def test_partial_credentials_detects_a_half_supplied_pair(monkeypatch, key, secret, partial):
+    """A key without its secret yields public-data mode; the config has to say so."""
+    for name, value in (("DELTA_API_KEY", key), ("DELTA_API_SECRET", secret)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    cfg = config_mod.load()
+    assert cfg.partial_credentials is partial
+    assert cfg.has_credentials is (key is not None and secret is not None)
