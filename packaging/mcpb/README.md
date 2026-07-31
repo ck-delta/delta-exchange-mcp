@@ -23,6 +23,14 @@ Produces `packaging/mcpb/delta-exchange-mcp-<version>.mcpb`. The version is read
 repo's `pyproject.toml`, and the manifest's tool list comes from introspecting the server,
 so the two cannot drift.
 
+`icon.png` is the Delta Exchange mark, rendered at 512x512 from the vector source used by
+`delta-exchange/api-console` (`app/favicon.svg`) with the viewBox widened to `-3 -3 36 36`
+so it is not edge-to-edge at icon sizes:
+
+```bash
+rsvg-convert -w 512 -h 512 favicon.svg -o icon.png
+```
+
 `manifest.json` and `pyproject.toml` here are **generated** — they are committed so the
 shipped manifest and the dependency pins are reviewable in a diff, but `build.sh` rewrites
 both, so edit `make_manifest.py` and `build.sh` rather than the output. `uv.lock`,
