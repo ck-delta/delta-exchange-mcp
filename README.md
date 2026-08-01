@@ -452,18 +452,6 @@ stay absent.
 
 </details>
 
-### n8n
-
-n8n cannot launch this server. Its built-in **MCP Client Tool** and **MCP Client** nodes take
-only a remote SSE or HTTP endpoint URL — there is no command, args, or env field, so there is
-nothing to point at a local stdio process. This server is stdio-only by design and there is no
-hosted endpoint, so the two are incompatible out of the box.
-
-Two ways round it, neither of which we test: install the third-party `n8n-nodes-mcp` community
-node, which does support stdio with command / args / env; or run this server behind an
-stdio-to-SSE proxy and give the built-in node that URL. Putting your API secret into either
-path means it stops being local-only, so weigh that first.
-
 ## Safety
 
 - **Read-only by default.** Trading tools register only with the explicit `DELTA_MCP_MODE=trade` opt-in; otherwise every tool is a GET and the server cannot place, edit, or cancel orders.
