@@ -179,7 +179,7 @@ Safety features:
 
 A tool exposes one endpoint. A **skill** is a written procedure for a multi-step job: which
 tools to call in what order, the formulas to apply, and what the answer should look like. The
-server ships three, and your assistant loads them on its own — you just ask the question.
+server ships three. Your assistant loads them on its own, so you just ask the question.
 
 | Skill | Ask for | Needs a key |
 |---|---|---|
@@ -188,8 +188,8 @@ server ships three, and your assistant loads them on its own — you just ask th
 | `funding-carry` | "Which perps are worth the carry?" | no |
 
 **`pnl-analytics`** is the big one. It reads your fills, matches them into round trips, and
-produces a full performance review across eight views — overview, P&L, instruments, funding,
-expiry, risk, charges, portfolio — plus a trader persona and an A+ to D- grade. It writes a
+produces a full performance review across eight views (overview, P&L, instruments, funding,
+expiry, risk, charges, portfolio), plus a trader persona and an A+ to D- grade. It writes a
 **self-contained HTML dashboard** to `~/.delta-exchange-mcp/reports/` that opens offline in any
 browser, and gives you the headline numbers in chat.
 

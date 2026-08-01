@@ -62,15 +62,15 @@ Three things here are load-bearing:
 
 `skills.py` publishes the contents of `skills_data/` on three MCP surfaces. `server.build_server()`
 calls `skills.register(mcp, cfg)` after the tool registrations, so a skill never points at a tool
-that is not there. `instructions.py` supplies the `instructions=` string passed to `FastMCP`; its
-job is the cross-tool knowledge no single docstring owns (families, symbol formats, the two
-defaults that silently truncate) plus the line telling the model to call `list_skills` first.
+that is not there. The `INSTRUCTIONS` block in `server.py` carries the line telling the model to
+call `list_skills` first for performance, risk, and funding questions; it is the only channel
+that reaches the model before it has seen any tool.
 
 **To add a skill**: create `skills_data/<name>/SKILL.md` with `name`, `description` and `requires`
 (`public` or `credentials`) in `---` frontmatter. Optional `references/*.md` and `assets/*` are
 picked up automatically, one level deep. Nothing else to register.
 
-Four things worth knowing before changing this module:
+Four constraints to respect when changing this module:
 
 1. **All three surfaces live in one file on purpose.** The `mcp` 2.x migration (PR #39) moves the
    resource and prompt decorators. One file to fix, not four.
@@ -80,7 +80,7 @@ Four things worth knowing before changing this module:
 3. **`get_skill(name, path)` is a dict lookup** into the map built at discovery, so traversal
    cannot resolve. Regression test: `test_get_skill_rejects_traversal_path`.
 4. **`requires: credentials` skills are hidden without keys**, mirroring `account.register`, and
-   `get_skill` will not serve them by name either — otherwise the model calls a skill whose tools
+   `get_skill` will not serve them by name either. Otherwise the model calls a skill whose tools
    are absent and blames the exchange.
 
 The frontmatter parser is a flat `key: value` reader, not YAML. Three keys do not justify a
