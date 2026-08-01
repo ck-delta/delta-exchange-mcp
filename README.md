@@ -382,20 +382,20 @@ Add to `~/.codeium/windsurf/mcp_config.json` (macOS / Linux) or `%USERPROFILE%\.
 <details>
 <summary><b>JSON config</b></summary>
 
-Add to `~/.config/zed/settings.json` (user-level) or `.zed/settings.json` (project-level). Zed uses the top-level key `context_servers` and nests `command` as an object — note the shape difference from other clients:
+Add to `~/.config/zed/settings.json` (user-level) or `.zed/settings.json` (project-level). Zed
+calls the top-level key `context_servers` rather than `mcpServers`; the entry itself has the
+usual shape:
 
 ```json
 {
   "context_servers": {
     "delta-exchange-mcp": {
-      "command": {
-        "path": "uvx",
-        "args": ["delta-exchange-mcp"],
-        "env": {
-          "DELTA_MCP_ENV": "india_prod",
-          "DELTA_API_KEY": "your-api-key",
-          "DELTA_API_SECRET": "your-api-secret"
-        }
+      "command": "uvx",
+      "args": ["delta-exchange-mcp"],
+      "env": {
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "your-api-key",
+        "DELTA_API_SECRET": "your-api-secret"
       }
     }
   }
@@ -530,22 +530,20 @@ claude mcp add delta-exchange-mcp-dev \
 }
 ```
 
-**Zed (nested `command` object):**
+**Zed (`context_servers` key):**
 
 ```json
 {
   "context_servers": {
     "delta-exchange-mcp-dev": {
-      "command": {
-        "path": "uvx",
-        "args": [
-          "--from",
-          "git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop",
-          "delta-exchange-mcp"
-        ],
-        "env": {
-          "DELTA_MCP_ENV": "india_prod"
-        }
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop",
+        "delta-exchange-mcp"
+      ],
+      "env": {
+        "DELTA_MCP_ENV": "india_prod"
       }
     }
   }
