@@ -193,27 +193,19 @@ Safety features:
 Copy this into Claude Code, Codex, Cursor, or any agent that can edit files on your machine:
 
 ```text
-Set up the Delta Exchange MCP server for me.
+Install the Delta Exchange MCP server into my MCP client: uvx delta-exchange-mcp, local
+stdio, entry name delta-exchange-mcp. Leave my other servers alone and write no API keys.
+Verify with `uvx delta-exchange-mcp --version` — never run it bare, it serves stdio and
+won't exit. Tell me what to restart.
 
-Read https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/main/README.md
-and follow the "Install in your MCP client" section for the client I am using. If you
-cannot tell which client that is, ask me.
-
-Rules:
-- Add a server entry named delta-exchange-mcp. Do not modify or remove any other MCP
-  server I already have configured.
-- Write the literal placeholders your-api-key and your-api-secret. Do not ask me for my
-  real API keys, and do not repeat them back to me. I will fill them in myself.
-- Use DELTA_MCP_ENV=india_prod unless I tell you testnet.
-- Check your work by running: uvx delta-exchange-mcp --version
-  Do not run the server without arguments. It serves over stdio and will not exit.
-- If that command fails with an import error, follow the README's Troubleshooting section.
-- Tell me which file you changed, and that I need to restart the client.
+If you don't know where my client keeps its MCP config, read
+https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/main/README.md
 ```
 
-Your agent writes placeholder credentials, never your real ones. Open the file it names,
-replace `your-api-key` and `your-api-secret` with your keys from the Delta dashboard, then
-restart the client. To set it up by hand instead, follow the steps for your client below.
+It writes no credentials on purpose, so the server comes up serving market data and works
+the moment you restart. Add `DELTA_API_KEY` and `DELTA_API_SECRET` to the entry it created
+when you want your own account. To set it up by hand instead, follow the steps for your
+client below.
 
 ### Cursor
 
