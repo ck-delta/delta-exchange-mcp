@@ -327,6 +327,20 @@ codex mcp add delta-exchange-mcp \
 
 Verify with `codex mcp list`.
 
+### OpenClaw
+
+```bash
+openclaw mcp add delta-exchange-mcp \
+  --command uvx \
+  --arg delta-exchange-mcp \
+  --env DELTA_MCP_ENV=india_prod \
+  --env DELTA_API_KEY=your-api-key \
+  --env DELTA_API_SECRET=your-api-secret
+```
+
+Repeat `--arg` and `--env` once per value. Writes to `~/.openclaw/openclaw.json`, where MCP
+servers live under `mcp.servers` rather than a top-level `mcpServers` key.
+
 <details>
 <summary><b>Codex — TOML config, or the desktop app's form</b></summary>
 
@@ -403,6 +417,52 @@ usual shape:
 ```
 
 </details>
+
+### Google Antigravity
+
+<details>
+<summary><b>JSON config</b></summary>
+
+Add to `~/.gemini/config/mcp_config.json` — note the `.gemini` directory, which Antigravity
+shares rather than using one of its own. In the IDE you can reach the same file without
+typing a path: the `...` menu at the top of the agent panel → **MCP Servers → Manage MCP
+Servers → View raw config**. In the CLI, type `/mcp`.
+
+```json
+{
+  "mcpServers": {
+    "delta-exchange-mcp": {
+      "command": "uvx",
+      "args": ["delta-exchange-mcp"],
+      "env": {
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "your-api-key",
+        "DELTA_API_SECRET": "your-api-secret"
+      }
+    }
+  }
+}
+```
+
+Prefer that global file over a project-local one: a project-level `mcp_config.json` is
+reported to be read and then silently ignored. Reopen the MCP panel after editing so the
+server actually spawns, and check the credentials really arrived — there are reports of `env`
+values not reaching the process, in which case the market-data tools work but account tools
+stay absent.
+
+</details>
+
+### n8n
+
+n8n cannot launch this server. Its built-in **MCP Client Tool** and **MCP Client** nodes take
+only a remote SSE or HTTP endpoint URL — there is no command, args, or env field, so there is
+nothing to point at a local stdio process. This server is stdio-only by design and there is no
+hosted endpoint, so the two are incompatible out of the box.
+
+Two ways round it, neither of which we test: install the third-party `n8n-nodes-mcp` community
+node, which does support stdio with command / args / env; or run this server behind an
+stdio-to-SSE proxy and give the built-in node that URL. Putting your API secret into either
+path means it stops being local-only, so weigh that first.
 
 ## Safety
 
