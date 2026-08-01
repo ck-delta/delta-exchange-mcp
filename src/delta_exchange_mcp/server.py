@@ -16,6 +16,7 @@ from delta_exchange_mcp import audit_log
 from delta_exchange_mcp import config as config_mod
 from delta_exchange_mcp import credentials, debug_log
 from delta_exchange_mcp import form
+from delta_exchange_mcp import skills
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
 from delta_exchange_mcp.tools import account, market, trading
@@ -66,6 +67,13 @@ Never ask for an API key or secret in the conversation, and never accept one sen
 message — anything sent that way is stored in the conversation and visible to you.
 get_connection_status reports whether a key is configured, which environment it points
 at, what this client may do now, what it may do after a restart, and whether one is due.
+
+This server ships skills: written procedures for the multi-step jobs people actually
+ask for, such as a full P&L review, a position risk check, or a funding carry scan.
+Before you answer any question about trading performance, open positions, risk, or
+funding, call list_skills, then get_skill on the match. The skill carries the method —
+which tools to call in which order, the formulas, and the output shape. Do not
+improvise a procedure a skill already defines.
 """
 
 
@@ -78,7 +86,9 @@ class DeltaMCP(FastMCP):
     """FastMCP with a supported pre-list hook for session-scoped entitlements."""
 
     def __init__(self) -> None:
-        self._before_list_tools: Callable[[ServerSession], Awaitable[None]] | None = None
+        self._before_list_tools: Callable[[ServerSession], Awaitable[None]] | None = (
+            None
+        )
         self.live_client: DeltaClient | None = None
         super().__init__("delta-exchange", instructions=INSTRUCTIONS)
 
@@ -119,6 +129,9 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
     mcp.live_client = client
     log_path = debug_log.configure(cfg)
     market.register(mcp, client)
+
+    # After the tools, so the skills only ever point at a surface that exists.
+    skills.register(mcp, cfg)
 
     account_registered = False
     trade_audit = None
@@ -276,17 +289,15 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
         # even for a protocol peer that called the opener directly before its first list.
         entitlement_checked.add(session)
         next_config, shared = await reconcile(session, allow_trade=False, notify=True)
-        identity_current = (
-            expected.environment is None
-            or (
-                (shared.get("DELTA_MCP_ENV") or "").strip() == expected.environment
-                and (shared.get("DELTA_API_KEY") or "").strip() == expected.api_key
-                and (shared.get("DELTA_API_SECRET") or "").strip() == expected.api_secret
-            )
+        identity_current = expected.environment is None or (
+            (shared.get("DELTA_MCP_ENV") or "").strip() == expected.environment
+            and (shared.get("DELTA_API_KEY") or "").strip() == expected.api_key
+            and (shared.get("DELTA_API_SECRET") or "").strip() == expected.api_secret
         )
         mode_current = (
             not expected.mode_setting
-            or (shared.get(expected.mode_setting) or "").strip().lower() == expected.mode
+            or (shared.get(expected.mode_setting) or "").strip().lower()
+            == expected.mode
         )
         return form.Activation(
             account_ready=account_registered,
@@ -320,9 +331,7 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
             # Credential/environment overrides cannot be repaired by restarting. A mode
             # override is different: if it says trade, restart is exactly what will arm it,
             # so retain that warning while also naming the override below.
-            "restart_required": not (
-                set(overridden) - {"DELTA_MCP_MODE"}
-            )
+            "restart_required": not (set(overridden) - {"DELTA_MCP_MODE"})
             and restart_required(next_config),
             "overridden_by_client": overridden,
             "client_name": client_name,
@@ -438,7 +447,9 @@ def main(argv: list[str] | None = None) -> None:
         banner += f" audit={audit.path if audit else 'off'}"
     if cfg.debug:
         log_path = debug_log.configure(cfg)  # idempotent — returns the same path
-        if log_path is not None:  # configure returns None if the log file can't be opened
+        if (
+            log_path is not None
+        ):  # configure returns None if the log file can't be opened
             banner += f" debug=on log={log_path}"
     print(banner, file=sys.stderr)
     insecure = store.insecure_permissions()
