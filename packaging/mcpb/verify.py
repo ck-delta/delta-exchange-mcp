@@ -7,12 +7,14 @@ fails here rather than on someone's machine.
 
 import json
 import os
+import queue
 import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -100,6 +102,23 @@ def launch_env(manifest: dict, mode: str) -> dict[str, str]:
     return env
 
 
+def _pump(stream, put) -> None:
+    """Move one of the child's output pipes somewhere the main thread can reach it.
+
+    Reading a pipe directly blocks until a newline arrives or the writer closes it, with no
+    way to give up. A bundle that starts but never answers is precisely what this verifier
+    exists to catch, and read inline it would hold the build until the runner's own job
+    timeout hours later instead of failing on the deadline below. Draining stderr matters
+    for the same reason from the other direction: a child that fills the stderr pipe buffer
+    while nobody reads it blocks before it ever replies on stdout.
+    """
+    try:
+        for line in iter(stream.readline, ""):
+            put(line)
+    finally:
+        put(None)
+
+
 def handshake(
     extracted: Path, env: dict[str, str] | None = None, timeout: float = 240.0
 ) -> list[str]:
@@ -113,6 +132,17 @@ def handshake(
         bufsize=1,
         env=env,
     )
+
+    replies: queue.Queue = queue.Queue()
+    errors: list[str] = []
+    readers = [
+        threading.Thread(target=_pump, args=(proc.stdout, replies.put), daemon=True),
+        threading.Thread(
+            target=_pump, args=(proc.stderr, lambda line: line and errors.append(line)), daemon=True
+        ),
+    ]
+    for reader in readers:
+        reader.start()
 
     def send(msg: dict) -> None:
         proc.stdin.write(json.dumps(msg) + "\n")
@@ -134,9 +164,12 @@ def handshake(
     deadline = time.time() + timeout
     seen: dict[int, dict] = {}
     asked = False
-    while time.time() < deadline and 2 not in seen:
-        line = proc.stdout.readline()
-        if not line:
+    while 2 not in seen:
+        try:
+            line = replies.get(timeout=max(0.0, deadline - time.time()))
+        except queue.Empty:  # the deadline passed with the child still alive and silent
+            break
+        if line is None:  # the child closed stdout
             break
         line = line.strip()
         if not line:
@@ -157,11 +190,16 @@ def handshake(
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
         proc.kill()
+    # Give the readers a moment to finish now the writer is gone, so the diagnostics below
+    # carry everything the child managed to say rather than whatever had arrived by then.
+    for reader in readers:
+        reader.join(timeout=5)
 
+    tail = "".join(errors)[-2000:]
     if 1 not in seen:
-        raise SystemExit(f"no initialize response\nstderr:\n{proc.stderr.read()[-2000:]}")
+        raise SystemExit(f"no initialize response\nstderr:\n{tail}")
     if 2 not in seen:
-        raise SystemExit(f"no tools/list response\nstderr:\n{proc.stderr.read()[-2000:]}")
+        raise SystemExit(f"no tools/list response\nstderr:\n{tail}")
 
     info = seen[1]["result"].get("serverInfo", {})
     print(f"  handshake: initialize OK, serverInfo={info}")
