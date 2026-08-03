@@ -92,6 +92,10 @@
       "description": "OHLC candles. For funding/mark/OI history prefer the dedicated tools"
     },
     {
+      "name": "get_connection_status",
+      "description": "Whether an API key is configured, where it points, and if a restart is due."
+    },
+    {
       "name": "get_debug_status",
       "description": "Whether debug logging is on and the absolute path of the current log file."
     },

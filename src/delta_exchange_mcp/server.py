@@ -3,7 +3,12 @@ from __future__ import annotations
 import argparse
 import sys
 
+import anyio
 from mcp.server.fastmcp import FastMCP
+from mcp.server.lowlevel import NotificationOptions
+from mcp.server.models import InitializationOptions
+from mcp.server.session import ServerSession
+from mcp.server.stdio import stdio_server
 
 from delta_exchange_mcp import audit_log
 from delta_exchange_mcp import config as config_mod
@@ -39,10 +44,27 @@ key was created on. The server speaks MCP over stdio and is normally launched by
 client rather than by hand.
 """
 
+# Sent to the model once per session, which is the only channel that reaches it in the
+# state that matters most: no key configured, so no account tool exists to carry a hint
+# on its own description. Without this, "what is my BTC position" on a fresh install gets
+# answered with "I have no tool for that" and no offer to fix it.
+INSTRUCTIONS = """\
+Delta Exchange India. Market data needs no setup and always works. The user's own account
+— positions, orders, fills, balances — is readable only when an API key is configured,
+and placing orders additionally requires them to set mode to trade in their MCP client.
+
+If the user asks about their own account and no account tool is available, call
+setup_credentials: it opens a form they type the key into. Never ask for an API key or
+secret in the conversation, and never accept one sent as a message — anything sent that
+way is stored in the conversation and visible to you. get_connection_status reports
+whether a key is configured, which environment it points at, and whether this client
+still needs restarting.
+"""
+
 
 def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
     cfg = cfg or config_mod.load()
-    mcp = FastMCP("delta-exchange")
+    mcp = FastMCP("delta-exchange", instructions=INSTRUCTIONS)
     # FastMCP has no version argument, and the server it wraps reports the mcp SDK's own
     # version when this is left unset — so clients would see the SDK version as ours.
     mcp._mcp_server.version = PACKAGE_VERSION
@@ -51,11 +73,68 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
     log_path = debug_log.configure(cfg)
 
     market.register(mcp, client)
+
+    # The config the registered surface is actually running on. It stops being the one
+    # loaded at startup when a key saved through the form brings the account tools up
+    # without a restart.
+    live = cfg
+    restart_pending = False
+
+    async def activate(session: ServerSession) -> bool:
+        """Bring the tool list up to date after a credential was saved.
+
+        Returns True when nothing further is needed, so the caller can say so instead of
+        asking someone to restart the client they are in the middle of talking to.
+
+        Registering the tools is only half of it. The client read the tool list once, at
+        startup, and re-reads it only when told the list changed — so the notification is
+        what actually makes them reachable, and it is sent here because it belongs to the
+        same event as the registration.
+
+        A key replacing an existing one changes no tools and reports False, and means it:
+        the account tools already registered hold a client built from the key being
+        replaced, and nothing here rebuilds them, so a rotation does need the restart.
+        """
+        nonlocal live, restart_pending
+        if live.has_credentials:
+            restart_pending = True
+            return False
+        fresh = config_mod.load()
+        if not fresh.has_credentials:
+            return False
+        account.register(mcp, DeltaClient(fresh))
+        live = fresh
+        # Trading is deliberately left out. Arming real order placement should follow
+        # from the user editing their own client config, and that edit already implies
+        # the restart — it must not follow from a form submitted inside a chat.
+        restart_pending = fresh.mode == "trade"
+        await session.send_tool_list_changed()
+        return not restart_pending
+
     # Registered whether or not credentials are set: someone with none needs to add a
     # first key, and someone with one still rotates it or switches environment.
-    form.register(mcp)
+    form.register(mcp, activate)
     if cfg.has_credentials:
         account.register(mcp, client)
+
+    @mcp.tool()
+    def get_connection_status() -> dict[str, object]:
+        """Whether an API key is configured, where it points, and if a restart is due.
+
+        Use this to answer "am I connected?", and to check whether a key the user just
+        saved has taken effect. Returns no key or secret value.
+        """
+        # Read the file rather than report startup state: another client on this machine
+        # shares it, so a key can appear without this process having been told.
+        stored = config_mod.load()
+        return {
+            "environment": live.env,
+            "credentials_configured": stored.has_credentials,
+            "account_tools_available": live.has_credentials,
+            "mode": live.mode,
+            "restart_required": stored.has_credentials
+            and (restart_pending or not live.has_credentials),
+        }
 
     trade_audit = None
     if cfg.has_credentials and cfg.mode == "trade":
@@ -84,6 +163,28 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
             return {"enabled": True, "log_path": str(log_path)}
 
     return mcp
+
+
+def initialization_options(mcp: FastMCP) -> InitializationOptions:
+    """What this server tells a client about itself, declaring a changeable tool list.
+
+    FastMCP's own `run_stdio_async` builds these with every notification flag off, so the
+    server would advertise `tools.listChanged: false`. A client told that has no reason to
+    re-read the tool list, which makes the notification sent when a saved credential
+    brings the account tools up a no-op — leaving the restart it exists to avoid as the
+    only way through.
+    """
+    return mcp._mcp_server.create_initialization_options(
+        NotificationOptions(tools_changed=True)
+    )
+
+
+async def serve(mcp: FastMCP) -> None:
+    """Serve over stdio, the only transport."""
+    async with stdio_server() as (read_stream, write_stream):
+        await mcp._mcp_server.run(
+            read_stream, write_stream, initialization_options(mcp)
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -156,4 +257,4 @@ def main(argv: list[str] | None = None) -> None:
             "market data will work.",
             file=sys.stderr,
         )
-    mcp.run()
+    anyio.run(serve, mcp)

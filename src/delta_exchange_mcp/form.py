@@ -32,11 +32,17 @@ still has something correct to say.
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.session import ServerSession
 
 from delta_exchange_mcp import credentials, store
 from delta_exchange_mcp.config import BASE_URLS, DASHBOARDS, DEFAULT_ENV
+
+# Given the session to notify on, brings the tool list up to date for a credential that
+# was just saved, and reports whether anything is still waiting for a restart.
+Activate = Callable[[ServerSession], Awaitable[bool]]
 
 VIEW_URI = "ui://delta-exchange/credentials.html"
 
@@ -328,16 +334,24 @@ def _opened_message() -> str:
         "A form is now open in this conversation. Tell the user to type their API key "
         "and secret into it — never ask them to send a key or secret as a chat message, "
         "because anything sent that way is stored in this conversation and visible to "
-        "you. If no form appeared, this client cannot display one: tell them to run "
+        "you. You will not see what they type or whether it saved: call "
+        "get_connection_status once they say they are done, which reports whether a key "
+        "is configured and whether this client still has to be restarted. If no form "
+        "appeared, this client cannot display one — tell them to run "
         "`uvx delta-exchange-mcp login` in a terminal, or to open "
-        f"{store.path()} and fill in DELTA_API_KEY and DELTA_API_SECRET. "
-        "Either way the client has to be restarted afterwards before the account tools "
-        "appear."
+        f"{store.path()} and fill in DELTA_API_KEY and DELTA_API_SECRET, then to restart "
+        "this client."
     )
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: FastMCP, activate: Activate | None = None) -> None:
     """Add the credential form and the two tools that drive it.
+
+    `activate` brings up the surface a newly saved credential unlocks, in the running
+    process, and reports whether anything is still outstanding. Without it a save can only
+    end in "restart this client", which is a poor thing to say to someone in the middle of
+    a conversation. It is optional so a test can register the form on its own rather than
+    build a whole server.
 
     `save_credentials` is hidden from the model by `_meta.ui.visibility`, which both
     tested hosts honour. On a client that ignores it the tool becomes model-callable,
@@ -353,9 +367,12 @@ def register(mcp: FastMCP) -> None:
     async def setup_credentials() -> dict[str, str]:
         """Open a form for the user to enter their Delta API key, kept out of the chat.
 
-        Call this whenever the user wants to connect their Delta account, add or replace
-        an API key, or when an account tool is unavailable because none is configured.
-        Never ask for the key or secret in the conversation instead.
+        Call this whenever the user wants to log in, sign in, connect their Delta
+        account, add or replace an API key, or when an account tool is unavailable
+        because none is configured. Call this first even when they say "login" — the
+        `login` terminal command is the fallback for clients that cannot display a form,
+        and whether this one can is reported back to you by this tool. Never ask for the
+        key or secret in the conversation instead.
         """
         nonlocal shown
         shown = True
@@ -363,7 +380,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(meta=_APP_ONLY)
     async def save_credentials(
-        environment: str, api_key: str, api_secret: str
+        environment: str, api_key: str, api_secret: str, ctx: Context
     ) -> dict[str, str]:
         """Save a key typed into the credential form. Called by the form, not by you.
 
@@ -402,6 +419,17 @@ def register(mcp: FastMCP) -> None:
         if problem is not None:
             return {"status": "failed", "message": problem}
 
+        # Leads with carrying on rather than restarting. The tools are registered by then,
+        # so the only open question is whether this client acted on being told the list
+        # changed, and asking it something settles that faster than a restart nobody needed.
+        ready = await activate(ctx.session) if activate is not None else False
+        next_step = (
+            "Your account tools are live in this session — just ask about your account. "
+            "If this client does not show them yet, restart it."
+            if ready
+            else "Restart this client to use your account."
+        )
+
         if not result.reachable:
             # Saved unverified on purpose: a flaky connection must not cost someone a key
             # they typed correctly, and the next real call will report the truth anyway.
@@ -409,7 +437,7 @@ def register(mcp: FastMCP) -> None:
                 "status": "unverified",
                 "message": (
                     f"Saved to {store.path()}, but Delta could not be reached to check "
-                    f"it. {result.detail} Restart this client to use your account."
+                    f"it. {result.detail} {next_step}"
                 ),
             }
 
@@ -420,8 +448,8 @@ def register(mcp: FastMCP) -> None:
         return {
             "status": "saved",
             "message": (
-                f"Connected{who}. Saved to {store.path()}. Restart this client to use "
-                "your account. Trading stays off — that is enabled per client, not here."
+                f"Connected{who}. Saved to {store.path()}. {next_step} Trading stays "
+                "off — that is enabled per client, not here."
             ),
         }
 

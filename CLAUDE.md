@@ -43,6 +43,20 @@ Each tool module exposes `register(mcp: FastMCP, client: DeltaClient) -> None` t
 
 `market.register` always runs; `account.register` runs only when `cfg.has_credentials` is true (both `DELTA_API_KEY` **and** `DELTA_API_SECRET` set).
 
+### Bringing the account surface up without a restart
+
+A credential saved through the in-chat form arrives in the running process, so `build_server` closes over an `activate(session)` callback and hands it to `form.register`. On the first save it calls `account.register` with a `DeltaClient` built from a freshly loaded config, then `session.send_tool_list_changed()`. It returns whether anything is still outstanding, which is what decides between "your account tools are live in this session" and "restart this client" in the message the form shows.
+
+Three things here are load-bearing:
+
+- **The capability has to be declared.** `serve()` runs stdio with `initialization_options(mcp)`, which passes `NotificationOptions(tools_changed=True)`. FastMCP's own `run_stdio_async` leaves every flag off, so the server would advertise `tools.listChanged: false` and a client would never re-read the tool list — the notification would be silently useless. `main` therefore calls `anyio.run(serve, mcp)`, **not** `mcp.run()`. Regression test: `test_the_server_declares_that_its_tool_list_can_change`.
+- **Trade mode is never activated this way.** `activate` registers reads only and reports False when `mode == "trade"`, so arming order placement still follows from the client config the user edited. Regression test: `test_trade_mode_still_waits_for_a_restart`.
+- **A rotation reports False and means it.** Already-registered account tools hold a `DeltaClient` built from the key being replaced, and nothing rebuilds them, so replacing a key in use genuinely needs the restart.
+
+`get_connection_status` is registered unconditionally and reports `{environment, credentials_configured, account_tools_available, mode, restart_required}` — never a key or secret. It exists because `save_credentials` is hidden from the model, so after a save the model cannot see whether it worked; without this it has no way to answer "am I connected?". `credentials_configured` re-reads the file rather than reporting startup state, since another client on the machine shares it.
+
+`FastMCP` is constructed with `instructions=INSTRUCTIONS`, which is the only channel that reaches the model when no key is configured — there is no account tool then to carry a hint on its own description.
+
 ### DeltaClient — single point for HTTP concerns
 
 `src/delta_exchange_mcp/client.py` centralizes the cross-cutting behaviors every tool depends on. Read this file before touching any tool logic:
