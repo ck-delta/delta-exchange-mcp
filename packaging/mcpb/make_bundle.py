@@ -154,25 +154,30 @@ async def tool_entries() -> list[dict[str, str]]:
     """
     for name in [name for name in os.environ if name.startswith("DELTA_")]:
         del os.environ[name]
-    os.environ.update({
-        "DELTA_MCP_MODE": "trade",
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_MCP_DEBUG": "1",
-        # Both logs are redirected into a throwaway directory. Introspecting a tool list
-        # produces nothing worth keeping, and left at their defaults each manifest build
-        # dropped another file into ~/.delta-exchange-mcp/.
-        "DELTA_MCP_DEBUG_FILE": str(pathlib.Path(tempfile.mkdtemp()) / "debug.log"),
-        "DELTA_API_KEY": "placeholder",
-        "DELTA_API_SECRET": "placeholder",
-        # Trade mode plus credentials is what opens the audit log, and listing tool names
-        # mutates nothing worth auditing. Left on, every manifest build dropped another
-        # empty file into ~/.delta-exchange-mcp/audit/, which is where 4,493 of them
-        # came from.
-        "DELTA_MCP_AUDIT": "off",
-    })
-    from delta_exchange_mcp.server import build_server
 
-    tools = await build_server().list_tools()
+    # Scratch directory rather than a bare mkdtemp, because turning debug on means the
+    # server opens a log file and nothing here wants to keep it. A bare mkdtemp is not
+    # removed by anyone, so every build would leave a directory and a log behind for the
+    # operating system to reap eventually — trading files left in the home directory for
+    # files left in /tmp, which is not the fix it looks like.
+    with tempfile.TemporaryDirectory(prefix="mcpb-manifest-") as scratch:
+        os.environ.update({
+            "DELTA_MCP_MODE": "trade",
+            "DELTA_MCP_ENV": "india_prod",
+            "DELTA_MCP_DEBUG": "1",
+            "DELTA_MCP_DEBUG_FILE": str(pathlib.Path(scratch) / "debug.log"),
+            "DELTA_API_KEY": "placeholder",
+            "DELTA_API_SECRET": "placeholder",
+            # Trade mode plus credentials is what opens the audit log, and listing tool
+            # names mutates nothing worth auditing. Left on, every manifest build dropped
+            # another empty file into ~/.delta-exchange-mcp/audit/, which is where 4,493
+            # of them came from.
+            "DELTA_MCP_AUDIT": "off",
+        })
+        from delta_exchange_mcp.server import build_server
+
+        tools = await build_server().list_tools()
+
     return [
         {
             "name": t.name,
