@@ -205,19 +205,12 @@ def test_write_leaves_settings_it_was_not_given_alone():
 
 @pytest.mark.parametrize(
     "value",
-    [
-        "has spaces",
-        "quotes'and\"more",
-        "hash#inside",
-        "newline\ninjected",
-        "DELTA_MCP_MODE=trade",
-    ],
+    ["has spaces", "quotes'and\"more", "hash#inside", "newline\ninjected", "DELTA_MCP_MODE=trade"],
 )
 def test_a_written_value_survives_being_read_back(value):
-    """Values arrive from a form field, so they are whatever someone pasted.
+    """A value carrying a newline or an `=` must come back as one string.
 
-    A value carrying a newline or an `=` must come back as one string rather than
-    silently defining a second setting — the last case would arm trading.
+    The last case would otherwise define a second setting and arm trading.
     """
     store.write({"DELTA_API_KEY": value, "DELTA_API_SECRET": "s"})
     cfg = config_mod.load()
@@ -240,9 +233,8 @@ def test_a_failed_write_leaves_the_previous_credential_untouched(monkeypatch):
         return real(target, key, value, *args, **kwargs)
 
     monkeypatch.setattr(store, "set_key", fail_on_the_secret)
-    problem = store.write({"DELTA_API_KEY": "new-key", "DELTA_API_SECRET": "new-secret"})
+    assert store.write({"DELTA_API_KEY": "new-key", "DELTA_API_SECRET": "new-secret"}) is not None
 
-    assert problem is not None
     cfg = config_mod.load()
     assert (cfg.api_key, cfg.api_secret) == ("old-key", "old-secret")
 
@@ -259,20 +251,30 @@ def test_a_failed_write_leaves_nothing_behind_beside_the_config(monkeypatch):
     assert [entry.name for entry in path.parent.iterdir()] == [path.name]
 
 
-def test_write_keeps_the_permissions_the_file_already_had():
-    """Saving a key is not the moment to silently change who can read the file."""
+def test_write_never_publishes_a_secret_into_a_file_others_can_read():
+    """Saving is the one moment a new secret enters this file.
+
+    Publishing it into a group- or world-readable file would hand it to every other
+    account on the machine, and silently — the permission warning only runs at startup.
+    """
+    path = write_store("DELTA_API_KEY=old\nDELTA_API_SECRET=old\n")
+    os.chmod(path, 0o644)
+    assert store.write({"DELTA_API_KEY": "fresh", "DELTA_API_SECRET": "fresh"}) is None
+
+    assert stat.S_IMODE(path.stat().st_mode) & (stat.S_IRGRP | stat.S_IROTH) == 0
+    assert store.insecure_permissions() is None
+
+
+def test_write_keeps_the_owner_bits_the_file_already_had():
+    """Masking group and other, not forcing 0600 — an owner who chose 0400 keeps it."""
     path = write_store("DELTA_API_KEY=old\n")
-    os.chmod(path, 0o600)
-    assert store.write({"DELTA_API_KEY": "new"}) is None
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    os.chmod(path, 0o400)
+    store.write({"DELTA_API_KEY": "new"})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o400
 
 
 def test_write_reports_a_read_only_directory_rather_than_raising():
-    """The in-chat form turns this into a message; an exception becomes a protocol error.
-
-    The directory rather than the file, because dotenv replaces the file by rename — so
-    a read-only `config.env` is still writable and only a locked-down directory stops it.
-    """
+    """A caller may be a tool answering a form, where an exception is not actionable."""
     path = write_store("DELTA_API_KEY=\n")
     os.chmod(path.parent, 0o500)
     try:
@@ -282,14 +284,12 @@ def test_write_reports_a_read_only_directory_rather_than_raising():
     assert problem is not None
     assert "DELTA_API_KEY" in problem
 
+def test_the_template_points_at_the_dashboard_the_rest_of_the_package_uses():
+    """store cannot import config — config imports store — so this is the only check."""
+    assert config_mod.DASHBOARDS["india_prod"] in store.TEMPLATE
 
 def test_write_reports_a_location_it_cannot_use(tmp_path, monkeypatch):
     blocker = tmp_path / "a-file"
     blocker.write_text("not a directory")
     monkeypatch.setenv("DELTA_MCP_CONFIG_FILE", str(blocker / "config.env"))
     assert store.write({"DELTA_API_KEY": "k"}) is not None
-
-
-def test_the_template_points_at_the_dashboard_the_rest_of_the_package_uses():
-    """store cannot import config — config imports store — so this is the only check."""
-    assert config_mod.DASHBOARDS["india_prod"] in store.TEMPLATE

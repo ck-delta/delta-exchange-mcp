@@ -118,9 +118,9 @@ def write(values: dict[str, str]) -> str | None:
     request. Staging every change on a copy and renaming once makes it all or nothing.
 
     `set_key` still does the line editing rather than a hand-rolled rewrite, because it
-    already preserves the template's comments and quotes whatever a form field can
-    produce: spaces, quotes, or a stray `=` that a naive `NAME=value` append would turn
-    into a second setting.
+    already preserves the template's comments and quotes whatever someone can type:
+    spaces, quotes, or a stray `=` that a naive `NAME=value` append would turn into a
+    second setting.
     """
     target = ensure()
     if target is None:
@@ -132,7 +132,12 @@ def write(values: dict[str, str]) -> str | None:
     # with stale-lock recovery, which is more machinery than a once-per-setup write earns.
     staged = None
     try:
-        mode = stat.S_IMODE(target.stat().st_mode)
+        # Owner bits are carried across, group and other are dropped. A write is the one
+        # moment a *new* secret enters this file, and publishing it into a group- or
+        # world-readable file would hand it to every other account on the machine — with
+        # nothing said, because the permission warning only runs at startup. Masking here
+        # rather than forcing 0600 leaves an owner who chose 0400 with the mode they chose.
+        mode = stat.S_IMODE(target.stat().st_mode) & 0o700
         handle, name = tempfile.mkstemp(dir=target.parent, prefix=".config-", suffix=".tmp")
         os.close(handle)
         staged = Path(name)
@@ -141,9 +146,6 @@ def write(values: dict[str, str]) -> str | None:
             written, _, _ = set_key(str(staged), key, value)
             if not written:
                 return f"could not write {key} to {target}"
-        # Carry the permissions across rather than leaving the temp file's own. Tightening
-        # a loose file is `insecure_permissions`' job to report, not this function's to do
-        # silently on an unrelated save.
         os.chmod(staged, mode)
         os.replace(staged, target)
         staged = None

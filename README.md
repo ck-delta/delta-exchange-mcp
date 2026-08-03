@@ -558,9 +558,13 @@ something unexpected — set `DELTA_MCP_DEBUG=1` in your MCP client config:
 ```jsonc
 "delta-exchange-mcp": {
   "command": "uvx",
-  "args": ["delta-exchange-mcp"]
+  "args": ["delta-exchange-mcp"],
+  "env": { "DELTA_MCP_DEBUG": "1" }
 }
 ```
+
+Or set it once for every client by adding `DELTA_MCP_DEBUG=1` to
+[the shared file](#add-your-api-key).
 
 Restart the client and re-run the action. Each HTTP call (request URL incl. filter params +
 response body + status) is logged to `~/.delta-exchange-mcp/logs/`. The exact path is printed
@@ -593,7 +597,7 @@ Replace `args` in any snippet above with the `git+` form. Three flavours:
 
 ```bash
 claude mcp add delta-exchange-mcp-dev \
-  --scope user
+  --scope user \
   -- uvx --from git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop delta-exchange-mcp
 ```
 
