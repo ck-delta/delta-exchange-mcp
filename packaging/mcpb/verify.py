@@ -77,7 +77,7 @@ def check_archive(mcpb: Path) -> None:
     print(f"  payload: {', '.join(sorted(required))}, {wheels.pop()}")
 
 
-def launch_env(manifest: dict, mode: str, config_file: Path) -> dict[str, str]:
+def launch_env(manifest: dict, mode: str, workdir: Path) -> dict[str, str]:
     """The environment a host would build, over a deliberately hostile one.
 
     The ambient half sets DELTA_MCP_MODE=trade and supplies credentials, which is what a
@@ -86,12 +86,19 @@ def launch_env(manifest: dict, mode: str, config_file: Path) -> dict[str, str]:
     makes "the form decides the mode, not the environment" an actual test rather than an
     assertion that passes because no credentials were present.
 
-    The shared settings file is redirected into the throwaway unpack directory. The
-    server reads ~/.delta-exchange-mcp/config.env for anything the manifest does not
-    declare, and the manifest declares only mode, environment and the two credentials —
-    so a developer with DELTA_MCP_DEBUG=1 in their own file would register a debug tool
-    that is not in the manifest and fail the undeclared-tool check here but not in CI.
-    Redirecting also keeps a build from writing into the user's home directory.
+    DELTA_MCP_DEBUG is in the ambient half and *not* declared by the manifest, which is the
+    point: the manifest env is applied over the user's environment, so an undeclared variable
+    reaches the server untouched and registers `get_debug_status`. Left out of here, the
+    undeclared-tool check in `main` could only ever pass, because CI's own shell has no such
+    variable. With it, that check is what proves the declared list is a real ceiling.
+
+    Everything the server writes is pointed at `workdir`, the throwaway unpack: the debug log
+    that turning debug on creates, the audit log that trade mode with credentials opens, and
+    the shared settings file. That last one is not tidiness — the server reads
+    ~/.delta-exchange-mcp/config.env for anything the manifest does not declare, so a
+    developer with DELTA_MCP_DEBUG=1 in their own file would fail the undeclared-tool check
+    here for a reason CI could never reproduce. Left at their defaults, every build also
+    wrote three files into a home directory a build has no business touching.
     """
     config = {k: v.get("default", "") for k, v in manifest["user_config"].items()}
     config.update({"mode": mode, "api_key": "placeholder", "api_secret": "placeholder"})
@@ -101,7 +108,10 @@ def launch_env(manifest: dict, mode: str, config_file: Path) -> dict[str, str]:
         "DELTA_MCP_MODE": "trade",
         "DELTA_API_KEY": "ambient",
         "DELTA_API_SECRET": "ambient",
-        "DELTA_MCP_CONFIG_FILE": str(config_file),
+        "DELTA_MCP_DEBUG": "1",
+        "DELTA_MCP_DEBUG_FILE": str(workdir / "debug.log"),
+        "DELTA_MCP_AUDIT_FILE": str(workdir / "audit.log"),
+        "DELTA_MCP_CONFIG_FILE": str(workdir / "shared-config.env"),
     })
     for key, raw in manifest["server"]["mcp_config"]["env"].items():
         env[key] = re.sub(
@@ -227,9 +237,8 @@ def main() -> None:
 
         # Someone who accepted the form's defaults, on a machine whose environment is
         # already asking for trade mode. The declared default has to win.
-        shared = tmp / "shared-config.env"
         default = handshake(
-            tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"], shared)
+            tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"], tmp)
         )
         leaked = [n for n in default if n.startswith(MUTATION_PREFIXES)]
         print(f"  default mode: {len(default)} tools, {len(leaked)} mutating")
@@ -242,15 +251,18 @@ def main() -> None:
             raise SystemExit("no tools registered")
 
         # And the opt-in has to actually reach trading, or the field is decorative.
-        opted = handshake(tmp, launch_env(manifest, "trade", shared))
+        opted = handshake(tmp, launch_env(manifest, "trade", tmp))
         mutating = [n for n in opted if n.startswith(MUTATION_PREFIXES)]
         print(f"  mode=trade:   {len(opted)} tools, {len(mutating)} mutating")
         if not mutating:
             raise SystemExit("opting into trade registered no mutation tools")
 
         # tools_generated is false, which promises the manifest lists everything reachable.
+        # Both runs, not just the trade one: an undeclared tool that a variable in the user's
+        # own environment switches on appears in the default install too, and that is the
+        # install almost everyone has.
         declared = {t["name"] for t in manifest["tools"]}
-        undeclared = set(opted) - declared
+        undeclared = (set(default) | set(opted)) - declared
         if undeclared:
             raise SystemExit(
                 "manifest declares tools_generated=false but the server registers "
