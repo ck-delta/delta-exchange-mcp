@@ -60,6 +60,17 @@ Each tool module exposes `register(mcp: FastMCP, client: DeltaClient) -> None` t
 
 `server.build_server()` registers them only when both creds are present. Without creds, the server runs in pure-public mode — same behaviour as before this surface existed.
 
+### Credential entry
+
+Three front-ends fill one file, `~/.delta-exchange-mcp/config.env`:
+
+- `store.py` owns the file — `path/read/ensure/write/insecure_permissions`. `ensure` creates it `0600` from a commented `TEMPLATE` on first run; `write` goes through dotenv's `set_key` so comments and unrelated settings survive. `config.setting(name)` resolves the process environment first and this file second, with empty meaning unanswered (a bundle substitutes every declared variable whether or not the field was filled).
+- `credentials.py` is the shared domain: `check(env, key, secret)` makes one `/profile` call, and `save(...)` writes the key, secret and environment together. Neither front-end owns these.
+- `login.py` is the terminal front-end. It refuses a non-TTY stdin on purpose — `getpass` reads a pipe rather than rejecting it, so `echo $KEY | ... login` would put the secret in shell history.
+- `form.py` is the in-chat front-end, an **MCP App** (SEP-1865): a `ui://` HTML resource with mime `text/html;profile=mcp-app`, opened by `setup_credentials` via `_meta.ui.resourceUri`, submitting to `save_credentials` which is hidden from the model by `_meta.ui.visibility: ["app"]`. Its `register(mcp)` takes no `DeltaClient` — `credentials.check` builds its own from the candidate key. Three constraints were established empirically against Claude Desktop and Codex desktop and must not regress: **inline every asset** (both hosts' CSP blocks external fetches, and one CDN reference blanks the frame); **complete the `ui/initialize` → `ui/notifications/initialized` handshake** or the frame stays collapsed; and **never feature-test on the `io.modelcontextprotocol/ui` capability** — Claude Desktop renders these views without advertising it. The view must never call `ui/message` or `ui/update-model-context`, which would hand the typed credential to the model. Regression tests: `tests/test_form.py`.
+
+Those `_meta` arguments are why `pyproject.toml` floors `mcp` at 1.26 — `meta=` landed on `FastMCP.tool` in 1.19 and on `FastMCP.resource` in 1.26, and below that the decorators reject it at import.
+
 ### Trading surface (mutations)
 
 `tools/trading.py` exposes the authenticated write tools (place/edit/cancel order, cancel-all, place/edit/cancel batch, place/edit bracket, set-leverage, change-margin, close-all, auto-topup). Its `register(mcp, client, audit)` is gated on `(cfg.has_credentials and cfg.mode == "trade")` in `build_server`; `DELTA_MCP_MODE` defaults to `read`, so the surface is off unless explicitly opted into.

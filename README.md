@@ -177,7 +177,25 @@ Cursor, Claude Code and everything else at the same time. The server creates the
 first time it runs, with instructions inside it, and prints the path in its startup line.
 It is created owner-only (`0600`).
 
-Two ways to fill it in.
+Three ways to fill it in. Pick one — they all write the same file.
+
+**In the conversation**, without leaving it. Ask your assistant to *connect my Delta
+account* and a small form appears inline, with a field for the key and one for the secret:
+
+```txt
+Connect my Delta Exchange account
+```
+
+What you type in that form goes straight to the file. It is not part of the conversation
+and the assistant cannot read it, because the form runs in its own frame rather than in
+the chat. This needs a client that renders in-chat forms — Claude Desktop and the Codex
+desktop app do today; if nothing appears, yours doesn't, and the assistant will tell you
+so and point you at one of the other two ways.
+
+> [!IMPORTANT]
+> Sending your key to the assistant as an ordinary chat message is not the same thing. A
+> message is in the assistant's context and is stored in the conversation. The form exists
+> precisely so it isn't. If an assistant offers to take the key that way, decline.
 
 **At a terminal**, which prompts with the input hidden and checks the key works before
 saving anything:
@@ -207,9 +225,10 @@ still work and take precedence over this file.
 4. Recommended: whitelist your IP on the key. Delta blocks non-whitelisted IPs and surfaces your current IP in the error message if it fires.
 5. **Match the environment**: a key from delta.exchange works only with `india_prod`, one from demo.delta.exchange only with `india_testnet`. Mixing them returns `InvalidApiKey`.
 
-`login` checks all four of these for you and refuses to save a key that fails, so you find
-out while you still have the key in front of you rather than the next time you ask a
-question.
+The in-chat form and `login` both check all four for you and refuse to save a key Delta
+rejects, so you find out while you still have the key in front of you rather than the next
+time you ask a question. Both also write `DELTA_MCP_ENV` alongside the key, so point 5
+takes care of itself.
 
 ### Settings reference
 
@@ -483,6 +502,21 @@ stay absent.
 New tools appear only after the respawn. The MCP `list_changed` notification refreshes the tool list of an already-running server; it does **not** swap the underlying package version, which always requires a restart.
 
 ## Troubleshooting
+
+### The key form doesn't appear in the chat
+
+You asked the assistant to connect your account, and it replied with a file path and a
+command instead of showing a form.
+
+That is the intended fallback, not a failure: rendering a form inline is an optional part
+of MCP that only some clients implement, and the server cannot tell in advance which ones
+do — Claude Desktop, for instance, renders these forms without announcing that it can. So
+the server always returns working instructions alongside the form, and on a client that
+shows nothing you see only the instructions.
+
+Use [one of the other two ways](#add-your-api-key): `uvx delta-exchange-mcp login`, or open
+`~/.delta-exchange-mcp/config.env` and fill in the three lines. Both write the same file
+the form would have.
 
 ### `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`
 
