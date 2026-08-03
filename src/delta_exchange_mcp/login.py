@@ -1,9 +1,11 @@
 """Interactive `login` for people already sitting at a terminal.
 
-Writes the same shared settings file that hand-editing uses, so this is one of several
-ways to fill one store rather than a mechanism of its own.
+One of several front-ends onto the same shared settings file — the in-chat form in
+`form` fills exactly the same three keys for people who never open a terminal, and
+hand-editing the file fills them too. The checking and writing live in `credentials`
+so all of them behave identically.
 
-It refuses to run without a terminal. `getpass` on its own does not: piping into it
+This refuses to run without a terminal. `getpass` on its own does not: piping into it
 prints a warning and then reads stdin anyway, so `echo $KEY | delta-exchange-mcp login`
 would quietly succeed. That is exactly the shape an agent trying to be helpful would
 reach for, and it would put the secret into shell history and into the agent's
@@ -16,53 +18,9 @@ import asyncio
 import getpass
 import os
 import sys
-from dataclasses import dataclass
 
-import httpx
-from dotenv import set_key
-
-from delta_exchange_mcp import store
-from delta_exchange_mcp.client import DeltaClient
-from delta_exchange_mcp.config import BASE_URLS, DEFAULT_ENV, Config
-from delta_exchange_mcp.errors import DeltaApiError
-
-DASHBOARDS = {
-    "india_prod": "https://www.delta.exchange/app/account/manageapikeys",
-    "india_testnet": "https://demo.delta.exchange/app/account/manageapikeys",
-}
-
-
-@dataclass(frozen=True)
-class Check:
-    """Outcome of asking Delta whether the credentials work."""
-
-    ok: bool
-    reachable: bool
-    detail: str
-
-
-async def _check(env: str, key: str, secret: str) -> Check:
-    """One authenticated call, so four documented failures surface here and not later.
-
-    A wrong environment for the key, an unwhitelisted IP, a key without Read Data, and
-    a truncated paste are all invisible until something signs a request. Doing it while
-    the person is still holding the key turns each into a message they can act on.
-    """
-    cfg = Config(env=env, base_url=BASE_URLS[env], api_key=key, api_secret=secret)  # type: ignore[arg-type]
-    client = DeltaClient(cfg)
-    try:
-        profile = await client.get("/profile", auth=True)
-    except DeltaApiError as exc:
-        return Check(ok=False, reachable=True, detail=str(exc))
-    except httpx.HTTPError as exc:
-        return Check(ok=False, reachable=False, detail=f"could not reach Delta: {exc}")
-    else:
-        who = ""
-        if isinstance(profile, dict):
-            who = str(profile.get("email") or profile.get("id") or "")
-        return Check(ok=True, reachable=True, detail=who)
-    finally:
-        await client.aclose()
+from delta_exchange_mcp import credentials, store
+from delta_exchange_mcp.config import BASE_URLS, DASHBOARDS, DEFAULT_ENV
 
 
 def _ask_env() -> str | None:
@@ -114,7 +72,7 @@ def run(verify: bool = True) -> int:
 
     if verify:
         print(f"\nChecking against {BASE_URLS[env]} ...")
-        result = asyncio.run(_check(env, key, secret))
+        result = asyncio.run(credentials.check(env, key, secret))
         if not result.reachable:
             # A flaky connection must not cost someone a key they typed correctly.
             print(f"  {result.detail}\n  saving anyway, unverified", file=sys.stderr)
@@ -124,17 +82,10 @@ def run(verify: bool = True) -> int:
         else:
             print(f"  ok{' — ' + result.detail if result.detail else ''}")
 
-    for name, value in (
-        ("DELTA_MCP_ENV", env),
-        ("DELTA_API_KEY", key),
-        ("DELTA_API_SECRET", secret),
-    ):
-        # set_key edits one line in place, leaving the template's comments and any other
-        # settings intact, so hand-editing and this command can share one file.
-        written, _, _ = set_key(str(path), name, value)
-        if not written:
-            print(f"could not write {name} to {path}", file=sys.stderr)
-            return 1
+    problem = credentials.save(env, key, secret)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 1
 
     print(f"\nSaved to {path}. Restart your MCP client.")
 

@@ -1,7 +1,7 @@
 import pytest
 
 from delta_exchange_mcp import config as config_mod
-from delta_exchange_mcp import login, store
+from delta_exchange_mcp import credentials, login, store
 
 
 class FakeTty:
@@ -20,7 +20,7 @@ def terminal(monkeypatch):
 
 def check_returning(**kwargs):
     async def fake(env, key, secret):
-        return login.Check(**kwargs)
+        return credentials.Check(**kwargs)
 
     return fake
 
@@ -43,7 +43,7 @@ def test_refuses_without_a_terminal(monkeypatch, capsys):
 
 
 def test_saves_after_a_successful_check(terminal, monkeypatch):
-    monkeypatch.setattr(login, "_check", check_returning(ok=True, reachable=True, detail=""))
+    monkeypatch.setattr(credentials, "check", check_returning(ok=True, reachable=True, detail=""))
     assert login.run() == 0
 
     cfg = config_mod.load()
@@ -53,7 +53,7 @@ def test_saves_after_a_successful_check(terminal, monkeypatch):
 
 def test_saving_keeps_the_template_and_its_instructions(terminal, monkeypatch):
     """The file has to stay hand-editable after login has written to it."""
-    monkeypatch.setattr(login, "_check", check_returning(ok=True, reachable=True, detail=""))
+    monkeypatch.setattr(credentials, "check", check_returning(ok=True, reachable=True, detail=""))
     login.run()
 
     body = store.path().read_text()
@@ -68,8 +68,8 @@ def test_a_rejected_key_is_not_saved(terminal, monkeypatch, capsys):
     exists at all.
     """
     monkeypatch.setattr(
-        login,
-        "_check",
+        credentials,
+        "check",
         check_returning(
             ok=False,
             reachable=True,
@@ -84,8 +84,8 @@ def test_a_rejected_key_is_not_saved(terminal, monkeypatch, capsys):
 def test_an_unreachable_api_still_saves(terminal, monkeypatch, capsys):
     """A flaky connection must not cost someone a key they typed correctly."""
     monkeypatch.setattr(
-        login,
-        "_check",
+        credentials,
+        "check",
         check_returning(ok=False, reachable=False, detail="could not reach Delta: timeout"),
     )
     assert login.run() == 0
@@ -97,7 +97,7 @@ def test_no_verify_skips_the_call(terminal, monkeypatch):
     async def explode(env, key, secret):
         raise AssertionError("--no-verify must not reach the API")
 
-    monkeypatch.setattr(login, "_check", explode)
+    monkeypatch.setattr(credentials, "check", explode)
     assert login.run(verify=False) == 0
     assert config_mod.load().has_credentials is True
 
@@ -127,6 +127,6 @@ def test_a_shell_export_that_would_shadow_the_file_is_reported(terminal, monkeyp
     Without this the key just saved would appear to do nothing at all.
     """
     monkeypatch.setenv("DELTA_API_KEY", "exported-in-the-shell")
-    monkeypatch.setattr(login, "_check", check_returning(ok=True, reachable=True, detail=""))
+    monkeypatch.setattr(credentials, "check", check_returning(ok=True, reachable=True, detail=""))
     assert login.run() == 0
     assert "takes precedence over the file" in capsys.readouterr().err

@@ -20,6 +20,15 @@ BASE_URLS: dict[str, str] = {
     "india_devnet": INDIA_DEVNET_REST,
 }
 
+# Where someone creates the key for each environment. Beside BASE_URLS because it is the
+# same per-environment fact from the user's side, and because every place that asks for a
+# credential has to name the right one — a prod key sent to testnet returns InvalidApiKey.
+# india_devnet is internal and has no public dashboard, so it is absent by design.
+DASHBOARDS: dict[str, str] = {
+    "india_prod": "https://www.delta.exchange/app/account/manageapikeys",
+    "india_testnet": "https://demo.delta.exchange/app/account/manageapikeys",
+}
+
 DEFAULT_ENV = "india_prod"
 DEFAULT_MODE = "read"
 MODES: set[str] = {"read", "trade"}

@@ -23,7 +23,7 @@ import os
 import stat
 from pathlib import Path
 
-from dotenv import dotenv_values
+from dotenv import dotenv_values, set_key
 
 DEFAULT_DIR = Path.home() / ".delta-exchange-mcp"
 DEFAULT_NAME = "config.env"
@@ -103,6 +103,28 @@ def ensure() -> Path | None:
     with os.fdopen(fd, "w") as handle:
         handle.write(TEMPLATE)
     return target
+
+
+def write(values: dict[str, str]) -> str | None:
+    """Set each of `values` in the shared file, returning a message if any could not be.
+
+    `set_key` edits one line in place, so the template's comments and any setting the
+    caller did not name survive. That is what lets hand-editing, `login` and the in-chat
+    form share one file rather than each owning a format of its own.
+    """
+    target = ensure()
+    if target is None:
+        return f"cannot write {path()}"
+    for name, value in values.items():
+        try:
+            written, _, _ = set_key(str(target), name, value)
+        except OSError as exc:
+            # Reported rather than raised because a caller may be a tool answering a form,
+            # where an exception becomes a protocol error the person cannot act on.
+            return f"could not write {name} to {target}: {exc}"
+        if not written:
+            return f"could not write {name} to {target}"
+    return None
 
 
 def insecure_permissions() -> str | None:
