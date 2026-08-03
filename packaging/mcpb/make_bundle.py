@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 import tomllib
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -131,6 +132,12 @@ async def tool_entries() -> list[dict[str, str]]:
     os.environ["DELTA_MCP_MODE"] = "trade"
     os.environ["DELTA_API_KEY"] = "placeholder"
     os.environ["DELTA_API_SECRET"] = "placeholder"
+    # The shared settings file is redirected as well, or the build reads the developer's
+    # own. Measured: a DELTA_MCP_DEBUG=1 line in ~/.delta-exchange-mcp/config.env writes
+    # get_debug_status into the manifest — 42 tools instead of 41 — and CI, which has no
+    # such file, then rejects that manifest as stale. It also stops a build creating a file
+    # in a home directory it has no business touching.
+    os.environ["DELTA_MCP_CONFIG_FILE"] = str(pathlib.Path(tempfile.mkdtemp()) / "config.env")
     from delta_exchange_mcp.server import build_server
 
     tools = await build_server().list_tools()
