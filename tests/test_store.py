@@ -185,3 +185,101 @@ def test_world_readable_file_is_reported_not_fatal():
 def test_missing_file_reports_no_permission_warning(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_MCP_CONFIG_FILE", str(tmp_path / "absent.env"))
     assert store.insecure_permissions() is None
+
+
+def test_write_creates_the_file_it_writes_into():
+    """Every front-end writes through here, and the first one to run finds no file."""
+    assert store.write({"DELTA_API_KEY": "k", "DELTA_API_SECRET": "s"}) is None
+    assert config_mod.load().has_credentials is True
+
+
+def test_write_leaves_settings_it_was_not_given_alone():
+    """Two settings written at different moments must not erase each other."""
+    write_store("DELTA_MCP_ENV=india_testnet\nDELTA_MCP_DEBUG=1\n")
+    assert store.write({"DELTA_API_KEY": "k", "DELTA_API_SECRET": "s"}) is None
+
+    cfg = config_mod.load()
+    assert (cfg.env, cfg.debug) == ("india_testnet", True)
+    assert cfg.has_credentials is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["has spaces", "quotes'and\"more", "hash#inside", "newline\ninjected", "DELTA_MCP_MODE=trade"],
+)
+def test_a_written_value_survives_being_read_back(value):
+    """A value carrying a newline or an `=` must come back as one string.
+
+    The last case would otherwise define a second setting and arm trading.
+    """
+    store.write({"DELTA_API_KEY": value, "DELTA_API_SECRET": "s"})
+    cfg = config_mod.load()
+    assert cfg.api_key == value
+    assert cfg.mode == "read"
+
+
+def test_a_failed_write_leaves_the_previous_credential_untouched(monkeypatch):
+    """A new key beside the old secret is worse than no write at all.
+
+    That pair was never issued together, so it still reads as complete, still registers
+    the account tools, and fails every signed request.
+    """
+    write_store("DELTA_API_KEY=old-key\nDELTA_API_SECRET=old-secret\n")
+    real = store.set_key
+
+    def fail_on_the_secret(target, key, value, *args, **kwargs):
+        if key == "DELTA_API_SECRET":
+            raise OSError("no space left on device")
+        return real(target, key, value, *args, **kwargs)
+
+    monkeypatch.setattr(store, "set_key", fail_on_the_secret)
+    assert store.write({"DELTA_API_KEY": "new-key", "DELTA_API_SECRET": "new-secret"}) is not None
+
+    cfg = config_mod.load()
+    assert (cfg.api_key, cfg.api_secret) == ("old-key", "old-secret")
+
+
+def test_a_failed_write_leaves_nothing_behind_beside_the_config(monkeypatch):
+    """The staging copy holds a secret, so a failure must not strand it in the directory."""
+    path = write_store("DELTA_API_KEY=old\n")
+
+    def boom(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(store, "set_key", boom)
+    assert store.write({"DELTA_API_KEY": "new"}) is not None
+    assert [entry.name for entry in path.parent.iterdir()] == [path.name]
+
+
+def test_write_never_publishes_a_secret_into_a_file_others_can_read():
+    """Saving is the one moment a new secret enters this file.
+
+    Publishing it into a group- or world-readable file would hand it to every other
+    account on the machine, and silently — the permission warning only runs at startup.
+    """
+    path = write_store("DELTA_API_KEY=old\nDELTA_API_SECRET=old\n")
+    os.chmod(path, 0o644)
+    assert store.write({"DELTA_API_KEY": "fresh", "DELTA_API_SECRET": "fresh"}) is None
+
+    assert stat.S_IMODE(path.stat().st_mode) & (stat.S_IRGRP | stat.S_IROTH) == 0
+    assert store.insecure_permissions() is None
+
+
+def test_write_keeps_the_owner_bits_the_file_already_had():
+    """Masking group and other, not forcing 0600 — an owner who chose 0400 keeps it."""
+    path = write_store("DELTA_API_KEY=old\n")
+    os.chmod(path, 0o400)
+    store.write({"DELTA_API_KEY": "new"})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o400
+
+
+def test_write_reports_a_read_only_directory_rather_than_raising():
+    """A caller may be a tool answering a form, where an exception is not actionable."""
+    path = write_store("DELTA_API_KEY=\n")
+    os.chmod(path.parent, 0o500)
+    try:
+        problem = store.write({"DELTA_API_KEY": "k"})
+    finally:
+        os.chmod(path.parent, 0o700)
+    assert problem is not None
+    assert "DELTA_API_KEY" in problem

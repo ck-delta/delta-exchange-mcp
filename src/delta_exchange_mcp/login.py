@@ -19,8 +19,6 @@ import sys
 from dataclasses import dataclass
 
 import httpx
-from dotenv import set_key
-
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
 from delta_exchange_mcp.config import BASE_URLS, DEFAULT_ENV, Config
@@ -124,17 +122,15 @@ def run(verify: bool = True) -> int:
         else:
             print(f"  ok{' — ' + result.detail if result.detail else ''}")
 
-    for name, value in (
-        ("DELTA_MCP_ENV", env),
-        ("DELTA_API_KEY", key),
-        ("DELTA_API_SECRET", secret),
-    ):
-        # set_key edits one line in place, leaving the template's comments and any other
-        # settings intact, so hand-editing and this command can share one file.
-        written, _, _ = set_key(str(path), name, value)
-        if not written:
-            print(f"could not write {name} to {path}", file=sys.stderr)
-            return 1
+    # One write, not three. The environment is part of what makes the key usable at all,
+    # so a half-applied save that leaves a new key beside the previous secret is worse
+    # than no save: it still reads as a complete pair and fails every signed request.
+    problem = store.write(
+        {"DELTA_MCP_ENV": env, "DELTA_API_KEY": key, "DELTA_API_SECRET": secret}
+    )
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 1
 
     print(f"\nSaved to {path}. Restart your MCP client.")
 

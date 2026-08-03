@@ -20,10 +20,12 @@ indistinguishable from a bad key.
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+import tempfile
 from pathlib import Path
 
-from dotenv import dotenv_values
+from dotenv import dotenv_values, set_key
 
 DEFAULT_DIR = Path.home() / ".delta-exchange-mcp"
 DEFAULT_NAME = "config.env"
@@ -103,6 +105,58 @@ def ensure() -> Path | None:
     with os.fdopen(fd, "w") as handle:
         handle.write(TEMPLATE)
     return target
+
+
+def write(values: dict[str, str]) -> str | None:
+    """Set all of `values` in the shared file at once, or leave the file as it was.
+
+    The all-at-once part is the point. `set_key` rewrites the whole file and renames it
+    into place for every single key, so writing a credential one key at a time publishes
+    three successive versions of the file. A failure on the third leaves a new API key
+    sitting beside the previous secret — a pair that was never issued together, which
+    still reads as complete, still registers the account tools, and fails every signed
+    request. Staging every change on a copy and renaming once makes it all or nothing.
+
+    `set_key` still does the line editing rather than a hand-rolled rewrite, because it
+    already preserves the template's comments and quotes whatever someone can type:
+    spaces, quotes, or a stray `=` that a naive `NAME=value` append would turn into a
+    second setting.
+    """
+    target = ensure()
+    if target is None:
+        return f"cannot write {path()}"
+
+    # SHORTCUT: last writer wins. Two clients saving at the same moment each stage a
+    # complete credential, so neither can publish a mixed pair, but the earlier save is
+    # overwritten rather than merged. Upgrading that means a lock file beside the config
+    # with stale-lock recovery, which is more machinery than a once-per-setup write earns.
+    staged = None
+    try:
+        # Owner bits are carried across, group and other are dropped. A write is the one
+        # moment a *new* secret enters this file, and publishing it into a group- or
+        # world-readable file would hand it to every other account on the machine — with
+        # nothing said, because the permission warning only runs at startup. Masking here
+        # rather than forcing 0600 leaves an owner who chose 0400 with the mode they chose.
+        mode = stat.S_IMODE(target.stat().st_mode) & 0o700
+        handle, name = tempfile.mkstemp(dir=target.parent, prefix=".config-", suffix=".tmp")
+        os.close(handle)
+        staged = Path(name)
+        shutil.copyfile(target, staged)
+        for key, value in values.items():
+            written, _, _ = set_key(str(staged), key, value)
+            if not written:
+                return f"could not write {key} to {target}"
+        os.chmod(staged, mode)
+        os.replace(staged, target)
+        staged = None
+    except OSError as exc:
+        # Reported rather than raised because a caller may be a tool answering a form,
+        # where an exception becomes a protocol error the person cannot act on.
+        return f"could not write {', '.join(values)} to {target}: {exc}"
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
+    return None
 
 
 def insecure_permissions() -> str | None:
