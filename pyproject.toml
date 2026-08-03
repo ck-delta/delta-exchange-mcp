@@ -13,6 +13,10 @@ dependencies = [
     "httpx>=0.28.1,<1",
     "mcp>=1.12.4,<2",
     "pydantic>=2.13.2,<3",
+    # Already resolved via mcp -> pydantic-settings, but declared because we import it
+    # directly. Hand-rolling the parse is what it replaces: quoted values, an `export`
+    # prefix, a trailing comment or CRLF endings each corrupt a credential silently.
+    "python-dotenv>=1.0,<2",
 ]
 
 [project.urls]

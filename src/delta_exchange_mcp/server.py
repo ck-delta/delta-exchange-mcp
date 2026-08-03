@@ -8,12 +8,13 @@ from mcp.server.fastmcp import FastMCP
 from delta_exchange_mcp import audit_log
 from delta_exchange_mcp import config as config_mod
 from delta_exchange_mcp import debug_log
+from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
 from delta_exchange_mcp.tools import account, market, trading
 from delta_exchange_mcp.version import PACKAGE_VERSION
 
 _ENV_HELP = """\
-configuration (environment variables only — this server takes no options):
+configuration (the settings below, from your MCP client or the shared file):
   DELTA_MCP_ENV         india_prod (default), india_testnet, india_devnet
   DELTA_API_KEY         optional; requires DELTA_API_SECRET for the account tools
   DELTA_API_SECRET      required alongside DELTA_API_KEY
@@ -23,6 +24,14 @@ configuration (environment variables only — this server takes no options):
   DELTA_MCP_DEBUG_FILE  override the debug log path
   DELTA_MCP_AUDIT       off/false/0/no to disable the trade-mode audit log
   DELTA_MCP_AUDIT_FILE  override the audit log path
+  DELTA_MCP_CONFIG_FILE override the shared settings file path
+
+Each is read from the environment your MCP client launched this server with, and
+falls back to a shared file at ~/.delta-exchange-mcp/config.env that every client
+on this machine reads. That file is created with instructions in it on first run,
+so an API key is set once rather than pasted into each client's own config.
+DELTA_MCP_MODE is the exception: it is never read from the shared file, so enabling
+trading in one client cannot arm every assistant on the machine.
 
 Prod and testnet API keys are separate; DELTA_MCP_ENV must match the dashboard the
 key was created on. The server speaks MCP over stdio and is normally launched by a
@@ -104,6 +113,8 @@ def main(argv: list[str] | None = None) -> None:
         f"[delta-exchange-mcp] stdio env={cfg.env} base_url={cfg.base_url} "
         f"mode={cfg.mode} surface={surface}"
     )
+    if cfg.config_file is not None:
+        banner += f" config={cfg.config_file}"
     if trade_on:
         audit = audit_log.configure(cfg)  # idempotent: appends to the same file path
         banner += f" audit={audit.path if audit else 'off'}"
@@ -112,6 +123,9 @@ def main(argv: list[str] | None = None) -> None:
         if log_path is not None:  # configure returns None if the log file can't be opened
             banner += f" debug=on log={log_path}"
     print(banner, file=sys.stderr)
+    insecure = store.insecure_permissions()
+    if insecure is not None:
+        print(f"[delta-exchange-mcp] {insecure}", file=sys.stderr)
     if cfg.partial_credentials:
         supplied = "DELTA_API_KEY" if cfg.api_key else "DELTA_API_SECRET"
         missing = "DELTA_API_SECRET" if cfg.api_key else "DELTA_API_KEY"
