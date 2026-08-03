@@ -225,6 +225,48 @@ def test_a_written_value_survives_being_read_back(value):
     assert cfg.mode == "read"
 
 
+def test_a_failed_write_leaves_the_previous_credential_untouched(monkeypatch):
+    """A new key beside the old secret is worse than no write at all.
+
+    That pair was never issued together, so it still reads as complete, still registers
+    the account tools, and fails every signed request.
+    """
+    write_store("DELTA_API_KEY=old-key\nDELTA_API_SECRET=old-secret\n")
+    real = store.set_key
+
+    def fail_on_the_secret(target, key, value, *args, **kwargs):
+        if key == "DELTA_API_SECRET":
+            raise OSError("no space left on device")
+        return real(target, key, value, *args, **kwargs)
+
+    monkeypatch.setattr(store, "set_key", fail_on_the_secret)
+    problem = store.write({"DELTA_API_KEY": "new-key", "DELTA_API_SECRET": "new-secret"})
+
+    assert problem is not None
+    cfg = config_mod.load()
+    assert (cfg.api_key, cfg.api_secret) == ("old-key", "old-secret")
+
+
+def test_a_failed_write_leaves_nothing_behind_beside_the_config(monkeypatch):
+    """The staging copy holds a secret, so a failure must not strand it in the directory."""
+    path = write_store("DELTA_API_KEY=old\n")
+
+    def boom(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(store, "set_key", boom)
+    assert store.write({"DELTA_API_KEY": "new"}) is not None
+    assert [entry.name for entry in path.parent.iterdir()] == [path.name]
+
+
+def test_write_keeps_the_permissions_the_file_already_had():
+    """Saving a key is not the moment to silently change who can read the file."""
+    path = write_store("DELTA_API_KEY=old\n")
+    os.chmod(path, 0o600)
+    assert store.write({"DELTA_API_KEY": "new"}) is None
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def test_write_reports_a_read_only_directory_rather_than_raising():
     """The in-chat form turns this into a message; an exception becomes a protocol error.
 

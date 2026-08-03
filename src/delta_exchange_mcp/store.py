@@ -20,7 +20,9 @@ indistinguishable from a bad key.
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+import tempfile
 from pathlib import Path
 
 from dotenv import dotenv_values, set_key
@@ -106,24 +108,52 @@ def ensure() -> Path | None:
 
 
 def write(values: dict[str, str]) -> str | None:
-    """Set each of `values` in the shared file, returning a message if any could not be.
+    """Set all of `values` in the shared file at once, or leave the file as it was.
 
-    `set_key` edits one line in place, so the template's comments and any setting the
-    caller did not name survive. That is what lets hand-editing, `login` and the in-chat
-    form share one file rather than each owning a format of its own.
+    The all-at-once part is the point. `set_key` rewrites the whole file and renames it
+    into place for every single key, so writing a credential one key at a time publishes
+    three successive versions of the file. A failure on the third leaves a new API key
+    sitting beside the previous secret — a pair that was never issued together, which
+    still reads as complete, still registers the account tools, and fails every signed
+    request. Staging every change on a copy and renaming once makes it all or nothing.
+
+    `set_key` still does the line editing rather than a hand-rolled rewrite, because it
+    already preserves the template's comments and quotes whatever a form field can
+    produce: spaces, quotes, or a stray `=` that a naive `NAME=value` append would turn
+    into a second setting.
     """
     target = ensure()
     if target is None:
         return f"cannot write {path()}"
-    for name, value in values.items():
-        try:
-            written, _, _ = set_key(str(target), name, value)
-        except OSError as exc:
-            # Reported rather than raised because a caller may be a tool answering a form,
-            # where an exception becomes a protocol error the person cannot act on.
-            return f"could not write {name} to {target}: {exc}"
-        if not written:
-            return f"could not write {name} to {target}"
+
+    # SHORTCUT: last writer wins. Two clients saving at the same moment each stage a
+    # complete credential, so neither can publish a mixed pair, but the earlier save is
+    # overwritten rather than merged. Upgrading that means a lock file beside the config
+    # with stale-lock recovery, which is more machinery than a once-per-setup write earns.
+    staged = None
+    try:
+        mode = stat.S_IMODE(target.stat().st_mode)
+        handle, name = tempfile.mkstemp(dir=target.parent, prefix=".config-", suffix=".tmp")
+        os.close(handle)
+        staged = Path(name)
+        shutil.copyfile(target, staged)
+        for key, value in values.items():
+            written, _, _ = set_key(str(staged), key, value)
+            if not written:
+                return f"could not write {key} to {target}"
+        # Carry the permissions across rather than leaving the temp file's own. Tightening
+        # a loose file is `insecure_permissions`' job to report, not this function's to do
+        # silently on an unrelated save.
+        os.chmod(staged, mode)
+        os.replace(staged, target)
+        staged = None
+    except OSError as exc:
+        # Reported rather than raised because a caller may be a tool answering a form,
+        # where an exception becomes a protocol error the person cannot act on.
+        return f"could not write {', '.join(values)} to {target}: {exc}"
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
     return None
 
 
