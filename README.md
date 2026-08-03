@@ -1,7 +1,9 @@
 <div align="center">
 
-<!-- Pinned to the commit that added it: the file is not on main until this stack merges,
-     and a pinned blob stays reachable through the PR ref regardless. -->
+<!-- Pinned to a commit, not a branch. PyPI renders this file for every published version, so
+     a branch path would make an old version's page show whatever the icon is today, or break
+     outright if the file is ever moved. A pinned blob also renders from a fork or a PR ref,
+     which is what got it pinned originally, before the file reached main. -->
 <img src="https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/d49dfba97e57120448bb4e0267abde6d7931e5f1/packaging/mcpb/icon.png" width="88" alt="Delta Exchange">
 
 # delta-exchange-mcp
@@ -662,6 +664,10 @@ Please redact `api_key` / `api_secret` from any logs or screenshots before attac
 [vs-code-insiders-badge]: https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=for-the-badge&logo=githubcopilot&logoColor=white
 [vs-code-insiders-link]: https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%2C%22env%22%3A%7B%22DELTA_MCP_ENV%22%3A%22%24%7Binput%3Adelta-env%7D%22%2C%22DELTA_API_KEY%22%3A%22%24%7Binput%3Adelta-api-key%7D%22%2C%22DELTA_API_SECRET%22%3A%22%24%7Binput%3Adelta-api-secret%7D%22%7D%7D&inputs=%5B%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-key%22%2C%22description%22%3A%22Delta%20API%20key%20%28leave%20empty%20for%20market%20data%20only%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22promptString%22%2C%22id%22%3A%22delta-api-secret%22%2C%22description%22%3A%22Delta%20API%20secret%20%28must%20match%20the%20key%29%22%2C%22password%22%3Atrue%7D%2C%7B%22type%22%3A%22pickString%22%2C%22id%22%3A%22delta-env%22%2C%22description%22%3A%22Delta%20Exchange%20environment%22%2C%22options%22%3A%5B%22india_prod%22%2C%22india_testnet%22%5D%2C%22default%22%3A%22india_prod%22%7D%5D&quality=insiders
 [claude-desktop-badge]: https://img.shields.io/badge/Claude_Desktop-Download_bundle-D97757?style=for-the-badge&logo=claude&logoColor=white
+<!-- Downloads the bundle directly. This addresses the unversioned alias rather than the
+     versioned filename, because /releases/latest/download/ needs an asset name that does not
+     change between releases; the attach job uploads both. It 404s if the newest release
+     carries no bundle, which is why RELEASING.md curls this exact URL after publishing. -->
 [claude-desktop-link]: https://github.com/delta-exchange/delta-exchange-mcp/releases/latest/download/delta-exchange-mcp.mcpb
 [claude-code-jump-badge]: https://img.shields.io/badge/Claude_Code-setup_below-6e7681?style=for-the-badge&logo=claude&logoColor=white
 [claude-code-jump-link]: #claude-code
