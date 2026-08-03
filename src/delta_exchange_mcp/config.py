@@ -38,23 +38,42 @@ class Config:
     def has_credentials(self) -> bool:
         return bool(self.api_key and self.api_secret)
 
+    @property
+    def partial_credentials(self) -> bool:
+        """One half of the pair supplied without the other — always a misconfiguration.
+
+        Both are needed to sign a request, so this silently yields public-data mode. It is
+        reported rather than raised: a stray DELTA_API_KEY in someone's shell should not
+        kill an otherwise working market-data server.
+        """
+        return bool(self.api_key) != bool(self.api_secret)
+
 
 def load() -> Config:
-    env = os.environ.get("DELTA_MCP_ENV", DEFAULT_ENV).lower()
+    # Empty falls back to the default rather than failing. A bundle substitutes every
+    # declared variable whether or not the user filled the field in, so a cleared input
+    # arrives as "" where a hand-written config would simply omit the variable.
+    env = os.environ.get("DELTA_MCP_ENV", "").strip().lower() or DEFAULT_ENV
     if env not in BASE_URLS:
         raise ValueError(
             f"DELTA_MCP_ENV must be one of {sorted(BASE_URLS)}, got {env!r}"
         )
 
-    mode = os.environ.get("DELTA_MCP_MODE", DEFAULT_MODE).strip().lower()
+    mode = os.environ.get("DELTA_MCP_MODE", "").strip().lower() or DEFAULT_MODE
     if mode not in MODES:
         raise ValueError(f"DELTA_MCP_MODE must be one of {sorted(MODES)}, got {mode!r}")
 
     return Config(
         env=env,  # type: ignore[arg-type]
         base_url=BASE_URLS[env],
-        api_key=os.environ.get("DELTA_API_KEY") or None,
-        api_secret=os.environ.get("DELTA_API_SECRET") or None,
+        # Stripped for the same reason env and mode are, and it matters more here. These
+        # are the two fields someone pastes into a form, so they carry the trailing newline
+        # a copy from the dashboard brings with it. Left unstripped, a whitespace-only value
+        # is truthy: has_credentials goes true, the account tools register, and
+        # partial_credentials stays false so the startup warning never fires. Every signed
+        # call then fails while the server reports the account surface as available.
+        api_key=(os.environ.get("DELTA_API_KEY") or "").strip() or None,
+        api_secret=(os.environ.get("DELTA_API_SECRET") or "").strip() or None,
         debug=os.environ.get("DELTA_MCP_DEBUG", "").strip().lower() in TRUTHY,
         mode=mode,  # type: ignore[arg-type]
     )
