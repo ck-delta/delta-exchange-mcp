@@ -88,7 +88,17 @@ USER_CONFIG = {
 def project() -> dict:
     """The repo's own [project] table — the single source of truth for shared metadata."""
     with (REPO / "pyproject.toml").open("rb") as f:
-        return tomllib.load(f)["project"]
+        proj = tomllib.load(f)["project"]
+    # render_manifest copies this straight through, and the manifest schema wants an SPDX
+    # string. PEP 639 spells it that way; the older `{ text = "MIT" }` table would land in
+    # the JSON as a nested object and fail validation with a message that names the field
+    # and not the cause. Checked here because this is the one place the file is read.
+    if not isinstance(proj.get("license"), str):
+        raise SystemExit(
+            f"[project].license must be an SPDX string, got {proj.get('license')!r} — "
+            "the manifest schema has no place for the table form"
+        )
+    return proj
 
 
 def wheel_name(proj: dict) -> str:
@@ -119,18 +129,31 @@ def render_pyproject(proj: dict) -> str:
 async def tool_entries() -> list[dict[str, str]]:
     """Introspect the server to list every tool the bundle can register.
 
-    The environment is forced rather than defaulted so the manifest depends only on the
-    source being packaged, never on the shell the build ran in — real exported credentials
-    would otherwise be read at build time for no reason.
+    Every DELTA_ variable is cleared before the ones that matter are set, so the manifest
+    depends only on the source being packaged and never on the shell the build ran in.
+    Forcing a named few was not enough. A developer with DELTA_MCP_DEBUG=1 exported got
+    `get_debug_status` written into the manifest — 42 tools instead of 41 — and CI, whose
+    shell has no such variable, then rejects that manifest as stale. DELTA_MCP_ENV leaked
+    the same way, where an invalid value in the shell failed the build inside `load()`.
 
     Trade mode is forced because the declared list has to be the *superset*. `tools_generated`
     is false, which promises the runtime never exposes anything beyond this list, and a user
     who sets Mode to trade reaches all of it. Listing only the read surface would break that
     promise the moment someone opted in.
     """
-    os.environ["DELTA_MCP_MODE"] = "trade"
-    os.environ["DELTA_API_KEY"] = "placeholder"
-    os.environ["DELTA_API_SECRET"] = "placeholder"
+    for name in [name for name in os.environ if name.startswith("DELTA_")]:
+        del os.environ[name]
+    os.environ.update({
+        "DELTA_MCP_MODE": "trade",
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "placeholder",
+        "DELTA_API_SECRET": "placeholder",
+        # Trade mode plus credentials is what opens the audit log, and listing tool names
+        # mutates nothing worth auditing. Left on, every manifest build dropped another
+        # empty file into ~/.delta-exchange-mcp/audit/, which is where 4,493 of them
+        # came from.
+        "DELTA_MCP_AUDIT": "off",
+    })
     from delta_exchange_mcp.server import build_server
 
     tools = await build_server().list_tools()
