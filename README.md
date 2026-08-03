@@ -215,9 +215,16 @@ DELTA_API_SECRET=your-secret-here
 DELTA_MCP_ENV=india_prod
 ```
 
-Restart your MCP client afterwards. If your client has its own place to put credentials —
-the Claude Desktop bundle's form, VS Code's prompts, the Codex desktop app's fields — those
-still work and take precedence over this file.
+The terminal and by-hand routes need your MCP client restarted afterwards, because the
+server reads this file when it starts. The in-chat form usually doesn't: it saves into the
+process your client is already talking to, registers the account tools there, and tells the
+client its tool list changed — so they become usable in the same conversation. It says which
+happened when it saves, and asks for a restart in the two cases that need one: replacing a
+key already in use, and enabling trade mode.
+
+If your client has its own place to put credentials — the Claude Desktop bundle's form, VS
+Code's prompts, the Codex desktop app's fields — those still work and take precedence over
+this file.
 
 ### Getting the key itself
 
@@ -264,13 +271,18 @@ for testnet.
 
 ### Let your coding agent set it up
 
-Copy this into Claude Code, Codex, Cursor, or any agent that can edit files on your machine:
+Copy this into Claude Code, Codex, Cursor, or any agent that can edit files on your
+machine. Claude Desktop's chat is not one of those — it has no access to your filesystem,
+so use the **Download for Claude Desktop** bundle at the top of this page instead.
 
 ```text
 Install the Delta Exchange MCP server into my MCP client: uvx delta-exchange-mcp, local
 stdio, entry name delta-exchange-mcp, no env block. Leave my other servers alone, and
 never ask me for my API key. Verify with `uvx delta-exchange-mcp --version` — never run
 it bare, it serves stdio and won't exit. Tell me what to restart.
+
+If you can't edit files on this machine, say so and read the README below for the
+simplest path for my client — don't improvise a config for me to paste.
 
 If you don't know where my client keeps its MCP config, read
 https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/main/README.md
