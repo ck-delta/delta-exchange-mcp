@@ -92,6 +92,10 @@
       "description": "OHLC candles. For funding/mark/OI history prefer the dedicated tools"
     },
     {
+      "name": "get_debug_status",
+      "description": "Whether debug logging is on and the absolute path of the current log file."
+    },
+    {
       "name": "get_fills",
       "description": "Your trade fills (executed trades). Paginated. Timestamps are microseconds."
     },
