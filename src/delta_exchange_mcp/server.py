@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from delta_exchange_mcp import audit_log
 from delta_exchange_mcp import config as config_mod
 from delta_exchange_mcp import debug_log
+from delta_exchange_mcp import form
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
 from delta_exchange_mcp.tools import account, market, trading
@@ -50,6 +51,9 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
     log_path = debug_log.configure(cfg)
 
     market.register(mcp, client)
+    # Registered whether or not credentials are set: someone with none needs to add a
+    # first key, and someone with one still rotates it or switches environment.
+    form.register(mcp)
     if cfg.has_credentials:
         account.register(mcp, client)
 

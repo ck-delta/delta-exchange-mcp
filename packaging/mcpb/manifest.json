@@ -208,8 +208,16 @@
       "description": "Place a single order. Pass exactly one of product_id or product_symbol."
     },
     {
+      "name": "save_credentials",
+      "description": "Save a key typed into the credential form. Called by the form, not by you."
+    },
+    {
       "name": "set_product_leverage",
       "description": "Set order leverage for a product."
+    },
+    {
+      "name": "setup_credentials",
+      "description": "Open a form for the user to enter their Delta API key, kept out of the chat."
     }
   ],
   "tools_generated": false,
