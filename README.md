@@ -37,10 +37,11 @@ The form has four fields:
 
 - **Environment** — which exchange to talk to: `india_prod` for the real one, or
   `india_testnet` for the practice site at demo.delta.exchange.
-- **API key** and **API secret** — leave both empty for market data only. Fill them in to let
-  the assistant read your own account. Create them under
-  [Account → API Keys](https://www.delta.exchange/app/account/manageapikeys) with the **Read
-  Data** permission, which is the one that allows viewing but not trading.
+- **API key** and **API secret** — fill them in to let the assistant read your own account.
+  Create them under [Account → API Keys](https://www.delta.exchange/app/account/manageapikeys)
+  with the **Read Data** permission, which is the one that allows viewing but not trading.
+  Leaving them empty gives you market data only, unless you have already put a key in the
+  [shared file](#add-your-api-key), in which case that one is used.
 - **Mode** — defaults to `read`, which cannot place, change or cancel orders. Setting it to
   `trade` adds the tools that do.
 
@@ -63,12 +64,7 @@ Open **Settings → Developer → Edit config**, or edit directly at:
   "mcpServers": {
     "delta-exchange-mcp": {
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
@@ -88,8 +84,9 @@ uvx delta-exchange-mcp --help
 ```
 
 The server runs **local stdio only**: your MCP client launches it as a subprocess, and your
-API keys never leave your machine. `uvx` resolves the latest published version from PyPI on
-each launch. To pin a specific version, use `uvx "delta-exchange-mcp==0.4.2"`. Pin `0.4.2`
+API keys never leave your machine — they live in one file that every client reads, not in
+each client's config. See [Add your API key](#add-your-api-key). `uvx` resolves the latest
+published version from PyPI on each launch. To pin a specific version, use `uvx "delta-exchange-mcp==0.4.2"`. Pin `0.4.2`
 or newer: earlier versions do not start on a fresh install (see
 [Troubleshooting](#troubleshooting)).
 
@@ -118,14 +115,14 @@ exchange, verbatim from a Claude Desktop session against the live API:
 
 ## Capabilities
 
-What the server can do is decided entirely by environment flags — three tiers, each a strict
-superset of the one above it:
+What the server can do is decided entirely by settings — three tiers, each a strict superset
+of the one above it:
 
 | Tier | You set | Unlocks | Audit-logged |
 |---|---|---|---|
 | Market data | nothing | Prices, order books, option chains, candles, funding / OI history, indices | — |
-| Account, read-only | `DELTA_API_KEY` + `DELTA_API_SECRET` | Your positions, orders, fills, balances, trading stats, profile | — |
-| Trading | both keys + `DELTA_MCP_MODE=trade` | Place / edit / cancel orders, brackets, leverage, margin, close-all | Yes |
+| Account, read-only | an API key — see [Add your API key](#add-your-api-key) | Your positions, orders, fills, balances, trading stats, profile | — |
+| Trading | a key plus `DELTA_MCP_MODE=trade` in one client's config | Place / edit / cancel orders, brackets, leverage, margin, close-all | Yes |
 
 A key without its matching secret is ignored and you stay on market data — the two are
 always used together.
@@ -141,20 +138,20 @@ them.
 > sending, convert between contracts and coins, or judge whether an order makes sense. Those
 > are your responsibility. Try `DELTA_MCP_ENV=india_testnet` first.
 
-Enable it in your client config:
+Enable it in the config of the one client you mean to trade from:
 
 ```jsonc
 "delta-exchange-mcp": {
   "command": "uvx",
   "args": ["delta-exchange-mcp"],
-  "env": {
-    "DELTA_MCP_ENV": "india_prod",
-    "DELTA_API_KEY": "your-api-key",
-    "DELTA_API_SECRET": "your-api-secret",
-    "DELTA_MCP_MODE": "trade"
-  }
+  "env": { "DELTA_MCP_MODE": "trade" }
 }
 ```
+
+This is the only setting that cannot come from the shared file described in
+[Add your API key](#add-your-api-key). Everything else there is convenience; this one
+places real orders, so it stays scoped to the single client whose config you edited
+rather than arming every assistant on the machine at once.
 
 Safety features:
 
@@ -163,30 +160,86 @@ Safety features:
 - **No silent retries.** Unlike GET reads, mutations are never auto-retried on timeout or rate-limit — a failure is surfaced, not re-sent.
 - **API key permission.** The key must have Trading enabled in Delta API management, and the requesting IP whitelisted.
 
-### Environment variables
+## Add your API key
 
-| Var | Default | Purpose |
-|---|---|---|
-| `DELTA_MCP_ENV` | `india_prod` | `india_prod`, `india_testnet`, or `india_devnet`. |
-| `DELTA_API_KEY` | _(unset)_ | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
-| `DELTA_API_SECRET` | _(unset)_ | API secret matching `DELTA_API_KEY`. |
-| `DELTA_MCP_MODE` | `read` | `trade` registers the trading tools (requires API key + secret). Default `read` is read-only. See [Trading](#trading-opt-in). |
-| `DELTA_MCP_DEBUG` | _(unset)_ | `1`/`true`/`yes`/`on` writes HTTP request URLs and response bodies to a log file (see [Debugging](#debugging--reporting-a-bug)). |
-| `DELTA_MCP_DEBUG_FILE` | _(auto)_ | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
-| `DELTA_MCP_AUDIT` | _(on in trade mode)_ | Set `off`/`false`/`0`/`no` to disable the trading audit log. On by default whenever `DELTA_MCP_MODE=trade`. |
-| `DELTA_MCP_AUDIT_FILE` | _(auto)_ | Override the audit log path. Default: `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`. |
+**You may not need one.** Market data works with no key at all, so if you only want prices,
+option chains or funding history, skip this section entirely.
 
-### Getting an API key
+To let an assistant read your own account, the key goes in **one file, once** — not into
+each client's config:
 
-1. Create a key at [delta.exchange/app/account/manageapikeys](https://www.delta.exchange/app/account/manageapikeys) (testnet: [demo.delta.exchange](https://demo.delta.exchange/app/account/manageapikeys)).
+```
+~/.delta-exchange-mcp/config.env
+```
+
+Every MCP client on your machine reads it, so a key set here works in Claude Desktop,
+Cursor, Claude Code and everything else at the same time. The server creates the file the
+first time it runs, with instructions inside it, and prints the path in its startup line.
+It is created owner-only (`0600`).
+
+Two ways to fill it in.
+
+**At a terminal**, which prompts with the input hidden and checks the key works before
+saving anything:
+
+```bash
+uvx delta-exchange-mcp login
+```
+
+**By hand**, if you'd rather. Open the file and fill in the three lines already waiting
+there — plain `NAME=value`, no punctuation to get wrong:
+
+```dotenv
+DELTA_API_KEY=your-key-here
+DELTA_API_SECRET=your-secret-here
+DELTA_MCP_ENV=india_prod
+```
+
+Restart your MCP client afterwards. If your client has its own place to put credentials —
+the Claude Desktop bundle's form, VS Code's prompts, the Codex desktop app's fields — those
+still work and take precedence over this file.
+
+### Getting the key itself
+
+1. Create it at [delta.exchange/app/account/manageapikeys](https://www.delta.exchange/app/account/manageapikeys) (testnet: [demo.delta.exchange](https://demo.delta.exchange/app/account/manageapikeys)).
 2. Both `api_key` and `api_secret` are shown **once at creation**. Save the secret immediately; it can't be re-derived.
 3. **Read Data** permission is enough for the read tiers. Trading permission is needed only for trade mode.
 4. Recommended: whitelist your IP on the key. Delta blocks non-whitelisted IPs and surfaces your current IP in the error message if it fires.
-5. **Match the environment**: prod keys with `DELTA_MCP_ENV=india_prod`, demo keys with `DELTA_MCP_ENV=india_testnet`. Mixing them returns `InvalidApiKey`.
+5. **Match the environment**: a key from delta.exchange works only with `india_prod`, one from demo.delta.exchange only with `india_testnet`. Mixing them returns `InvalidApiKey`.
+
+`login` checks all four of these for you and refuses to save a key that fails, so you find
+out while you still have the key in front of you rather than the next time you ask a
+question.
+
+### Settings reference
+
+Each setting is read from your MCP client first, then from `~/.delta-exchange-mcp/config.env`.
+A value your client sets always wins; leaving it empty there means "not answered" and falls
+through to the file.
+
+| Var | Default | Shared file? | Purpose |
+|---|---|---|---|
+| `DELTA_MCP_ENV` | `india_prod` | yes | `india_prod`, `india_testnet`, or `india_devnet`. |
+| `DELTA_API_KEY` | _(unset)_ | yes | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
+| `DELTA_API_SECRET` | _(unset)_ | yes | API secret matching `DELTA_API_KEY`. |
+| `DELTA_MCP_MODE` | `read` | **no** | `trade` registers the trading tools (requires API key + secret). Per client on purpose — see [Trading](#trading-opt-in). |
+| `DELTA_MCP_DEBUG` | _(unset)_ | yes | `1`/`true`/`yes`/`on` writes HTTP request URLs and response bodies to a log file (see [Debugging](#debugging--reporting-a-bug)). |
+| `DELTA_MCP_DEBUG_FILE` | _(auto)_ | yes | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
+| `DELTA_MCP_AUDIT` | _(on in trade mode)_ | yes | Set `off`/`false`/`0`/`no` to disable the trading audit log. On by default whenever `DELTA_MCP_MODE=trade`. |
+| `DELTA_MCP_AUDIT_FILE` | _(auto)_ | yes | Override the audit log path. Default: `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`. |
+| `DELTA_MCP_CONFIG_FILE` | _(auto)_ | n/a | Move the shared file itself. Default: `~/.delta-exchange-mcp/config.env`. |
+
+The key and its secret are always taken from the same place. If either is set in your
+client, both come from there; otherwise both come from the file. That prevents pairing a
+stale key from your shell with a secret from the file — a combination that was never issued
+together, and which fails every signed call while the server reports the account tools as
+available.
 
 ## Install in your MCP client
 
-`DELTA_API_KEY` / `DELTA_API_SECRET` are **optional** in every snippet below — drop them for public-data-only mode. Set `DELTA_MCP_ENV=india_testnet` for testnet.
+None of the snippets below carry credentials, because they don't need to — put the key in
+[the shared file](#add-your-api-key) once instead. Set `DELTA_MCP_ENV=india_testnet` there
+for testnet.
 
 ### Let your coding agent set it up
 
@@ -194,18 +247,18 @@ Copy this into Claude Code, Codex, Cursor, or any agent that can edit files on y
 
 ```text
 Install the Delta Exchange MCP server into my MCP client: uvx delta-exchange-mcp, local
-stdio, entry name delta-exchange-mcp. Leave my other servers alone and write no API keys.
-Verify with `uvx delta-exchange-mcp --version` — never run it bare, it serves stdio and
-won't exit. Tell me what to restart.
+stdio, entry name delta-exchange-mcp, no env block. Leave my other servers alone, and
+never ask me for my API key. Verify with `uvx delta-exchange-mcp --version` — never run
+it bare, it serves stdio and won't exit. Tell me what to restart.
 
 If you don't know where my client keeps its MCP config, read
 https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/main/README.md
 ```
 
-It writes no credentials on purpose, so the server comes up serving market data and works
-the moment you restart. Add `DELTA_API_KEY` and `DELTA_API_SECRET` to the entry it created
-when you want your own account. To set it up by hand instead, follow the steps for your
-client below.
+The entry it writes holds no credentials and needs none — the server comes up on market
+data and works the moment you restart. Your key goes in
+[the shared file](#add-your-api-key) instead, which is why the agent never has to touch it.
+To set it up by hand, follow the steps for your client below.
 
 ### Cursor
 
@@ -223,12 +276,7 @@ Global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). P
   "mcpServers": {
     "delta-exchange-mcp": {
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
@@ -279,12 +327,7 @@ Add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and 
     "delta-exchange-mcp": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "${input:delta-env}",
-        "DELTA_API_KEY": "${input:delta-api-key}",
-        "DELTA_API_SECRET": "${input:delta-api-secret}"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
@@ -298,11 +341,7 @@ Leave both prompts empty for public-data-only mode.
 
 ```bash
 claude mcp add delta-exchange-mcp \
-  --scope user \
-  --env DELTA_MCP_ENV=india_prod \
-  --env DELTA_API_KEY=your-api-key \
-  --env DELTA_API_SECRET=your-api-secret \
-  -- uvx delta-exchange-mcp
+  --scope user -- uvx delta-exchange-mcp
 ```
 
 `--scope user` makes the server available across all projects. Verify with `claude mcp list`.
@@ -310,11 +349,7 @@ claude mcp add delta-exchange-mcp \
 ### Codex
 
 ```bash
-codex mcp add delta-exchange-mcp \
-  --env DELTA_MCP_ENV=india_prod \
-  --env DELTA_API_KEY=your-api-key \
-  --env DELTA_API_SECRET=your-api-secret \
-  -- uvx delta-exchange-mcp
+codex mcp add delta-exchange-mcp -- uvx delta-exchange-mcp
 ```
 
 Verify with `codex mcp list`.
@@ -324,14 +359,11 @@ Verify with `codex mcp list`.
 ```bash
 openclaw mcp add delta-exchange-mcp \
   --command uvx \
-  --arg delta-exchange-mcp \
-  --env DELTA_MCP_ENV=india_prod \
-  --env DELTA_API_KEY=your-api-key \
-  --env DELTA_API_SECRET=your-api-secret
+  --arg delta-exchange-mcp
 ```
 
-Repeat `--arg` and `--env` once per value. Writes to `~/.openclaw/openclaw.json`, where MCP
-servers live under `mcp.servers` rather than a top-level `mcpServers` key.
+Repeat `--arg` once per value. Writes to `~/.openclaw/openclaw.json`, where MCP servers live
+under `mcp.servers` rather than a top-level `mcpServers` key.
 
 <details>
 <summary><b>Codex — TOML config, or the desktop app's form</b></summary>
@@ -342,7 +374,6 @@ Write `~/.codex/config.toml` by hand:
 [mcp_servers.delta-exchange-mcp]
 command = "uvx"
 args = ["delta-exchange-mcp"]
-env = { DELTA_MCP_ENV = "india_prod", DELTA_API_KEY = "your-api-key", DELTA_API_SECRET = "your-api-secret" }
 ```
 
 Desktop app: go to **Plugins → MCPs → Connect to a custom MCP**, leave **Type** as STDIO, and fill in:
@@ -352,7 +383,7 @@ Desktop app: go to **Plugins → MCPs → Connect to a custom MCP**, leave **Typ
 | Name | `delta-exchange-mcp` |
 | Command to launch | `uvx` (`uvx.exe` on Windows) |
 | Arguments | `delta-exchange-mcp` |
-| Environment variables | `DELTA_MCP_ENV` = `india_prod`, `DELTA_API_KEY` = your-api-key, `DELTA_API_SECRET` = your-api-secret |
+| Environment variables | leave empty |
 
 Leave the other fields empty, then restart the app.
 
@@ -370,12 +401,7 @@ Add to `~/.codeium/windsurf/mcp_config.json` (macOS / Linux) or `%USERPROFILE%\.
   "mcpServers": {
     "delta-exchange-mcp": {
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
@@ -397,12 +423,7 @@ usual shape:
   "context_servers": {
     "delta-exchange-mcp": {
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
@@ -425,12 +446,7 @@ Servers → View raw config**. In the CLI, type `/mcp`.
   "mcpServers": {
     "delta-exchange-mcp": {
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
@@ -506,11 +522,7 @@ something unexpected — set `DELTA_MCP_DEBUG=1` in your MCP client config:
 ```jsonc
 "delta-exchange-mcp": {
   "command": "uvx",
-  "args": ["delta-exchange-mcp"],
-  "env": {
-    "DELTA_MCP_ENV": "india_prod",
-    "DELTA_MCP_DEBUG": "1"
-  }
+  "args": ["delta-exchange-mcp"]
 }
 ```
 
@@ -545,8 +557,7 @@ Replace `args` in any snippet above with the `git+` form. Three flavours:
 
 ```bash
 claude mcp add delta-exchange-mcp-dev \
-  --scope user \
-  --env DELTA_MCP_ENV=india_prod \
+  --scope user
   -- uvx --from git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop delta-exchange-mcp
 ```
 
@@ -561,10 +572,7 @@ claude mcp add delta-exchange-mcp-dev \
         "--from",
         "git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop",
         "delta-exchange-mcp"
-      ],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod"
-      }
+      ]
     }
   }
 }
@@ -581,10 +589,7 @@ claude mcp add delta-exchange-mcp-dev \
         "--from",
         "git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop",
         "delta-exchange-mcp"
-      ],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod"
-      }
+      ]
     }
   }
 }
