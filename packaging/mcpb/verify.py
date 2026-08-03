@@ -75,7 +75,7 @@ def check_archive(mcpb: Path) -> None:
     print(f"  payload: {', '.join(sorted(required))}, {wheels.pop()}")
 
 
-def launch_env(manifest: dict, mode: str) -> dict[str, str]:
+def launch_env(manifest: dict, mode: str, config_file: Path) -> dict[str, str]:
     """The environment a host would build, over a deliberately hostile one.
 
     The ambient half sets DELTA_MCP_MODE=trade and supplies credentials, which is what a
@@ -83,6 +83,13 @@ def launch_env(manifest: dict, mode: str) -> dict[str, str]:
     ${user_config.x} resolved the way the host resolves it. Checking the result is what
     makes "the form decides the mode, not the environment" an actual test rather than an
     assertion that passes because no credentials were present.
+
+    The shared settings file is redirected into the throwaway unpack directory. The
+    server reads ~/.delta-exchange-mcp/config.env for anything the manifest does not
+    declare, and the manifest declares only mode, environment and the two credentials —
+    so a developer with DELTA_MCP_DEBUG=1 in their own file would register a debug tool
+    that is not in the manifest and fail the undeclared-tool check here but not in CI.
+    Redirecting also keeps a build from writing into the user's home directory.
     """
     config = {k: v.get("default", "") for k, v in manifest["user_config"].items()}
     config.update({"mode": mode, "api_key": "placeholder", "api_secret": "placeholder"})
@@ -92,6 +99,7 @@ def launch_env(manifest: dict, mode: str) -> dict[str, str]:
         "DELTA_MCP_MODE": "trade",
         "DELTA_API_KEY": "ambient",
         "DELTA_API_SECRET": "ambient",
+        "DELTA_MCP_CONFIG_FILE": str(config_file),
     })
     for key, raw in manifest["server"]["mcp_config"]["env"].items():
         env[key] = re.sub(
@@ -181,7 +189,10 @@ def main() -> None:
 
         # Someone who accepted the form's defaults, on a machine whose environment is
         # already asking for trade mode. The declared default has to win.
-        default = handshake(tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"]))
+        shared = tmp / "shared-config.env"
+        default = handshake(
+            tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"], shared)
+        )
         leaked = [n for n in default if n.startswith(MUTATION_PREFIXES)]
         print(f"  default mode: {len(default)} tools, {len(leaked)} mutating")
         if leaked:
@@ -193,7 +204,7 @@ def main() -> None:
             raise SystemExit("no tools registered")
 
         # And the opt-in has to actually reach trading, or the field is decorative.
-        opted = handshake(tmp, launch_env(manifest, "trade"))
+        opted = handshake(tmp, launch_env(manifest, "trade", shared))
         mutating = [n for n in opted if n.startswith(MUTATION_PREFIXES)]
         print(f"  mode=trade:   {len(opted)} tools, {len(mutating)} mutating")
         if not mutating:
