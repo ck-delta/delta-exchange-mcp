@@ -112,4 +112,13 @@ def main(argv: list[str] | None = None) -> None:
         if log_path is not None:  # configure returns None if the log file can't be opened
             banner += f" debug=on log={log_path}"
     print(banner, file=sys.stderr)
+    if cfg.partial_credentials:
+        supplied = "DELTA_API_KEY" if cfg.api_key else "DELTA_API_SECRET"
+        missing = "DELTA_API_SECRET" if cfg.api_key else "DELTA_API_KEY"
+        print(
+            f"[delta-exchange-mcp] {supplied} is set but {missing} is not. Both are "
+            "required to sign a request, so the account tools are NOT available and only "
+            "market data will work.",
+            file=sys.stderr,
+        )
     mcp.run()

@@ -1,0 +1,81 @@
+name: Bundle
+
+on:
+  pull_request:
+    paths:
+      - "packaging/mcpb/**"
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/bundle.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv publishes no moving major tag past v7, so pin the exact release.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      # The mcpb CLI is Node, and build.sh compiles it from a pinned upstream commit
+      # (mcpb_cli.sh) because the published release signs bundles Claude Desktop refuses.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: actions/cache@v6
+        with:
+          path: .mcpb-cli
+          key: mcpb-cli-${{ hashFiles('packaging/mcpb/mcpb_cli.sh') }}
+
+      # Builds the wheel, derives the bundle project from pyproject.toml, locks, generates
+      # the manifest, packs, then verifies: archive structure, the exact packed payload, a
+      # real MCP handshake, and that no mutation tool registered.
+      - run: bash packaging/mcpb/build.sh
+        env:
+          MCPB_CLI_CACHE: ${{ github.workspace }}/.mcpb-cli
+
+      # manifest.json is committed so the shipped contract is reviewable in a diff. If a
+      # rebuild would change it, the committed copy is stale — regenerate and commit.
+      - name: Check the committed manifest is current
+        run: git diff --exit-code -- packaging/mcpb/manifest.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: delta-exchange-mcp-bundle
+          path: packaging/mcpb/*.mcpb
+          if-no-files-found: error
+
+  attach:
+    needs: bundle
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: delta-exchange-mcp-bundle
+      # `gh` ships on the runner, so the only step holding contents:write runs no
+      # third-party code at all. Stronger than pinning a third-party action to a commit.
+      #
+      # Uploaded twice: the versioned name is the archival record, and the unversioned copy
+      # is what /releases/latest/download/ can address, since that URL needs an asset name
+      # that does not change between releases. The README download link points at the alias.
+      - run: |
+          versioned=$(ls ./*.mcpb)
+          cp "$versioned" delta-exchange-mcp.mcpb
+          gh release upload "$TAG" "$versioned" delta-exchange-mcp.mcpb --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
