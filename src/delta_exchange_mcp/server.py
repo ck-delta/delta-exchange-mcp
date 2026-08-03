@@ -97,11 +97,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"delta-exchange-mcp {PACKAGE_VERSION}",
     )
+    # Optional, so a bare invocation still means "serve" — that is how every MCP client
+    # launches this, and it must never become a subcommand.
+    sub = parser.add_subparsers(dest="command")
+    login_parser = sub.add_parser(
+        "login",
+        help="store your API key in the shared settings file, once for every client",
+    )
+    login_parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="skip the check against Delta and save whatever is entered",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
-    build_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
+
+    if args.command == "login":
+        from delta_exchange_mcp import login
+
+        raise SystemExit(login.run(verify=not args.no_verify))
 
     cfg = config_mod.load()
     mcp = build_server(cfg)
