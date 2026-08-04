@@ -54,7 +54,14 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 
 from delta_exchange_mcp import credentials, store
-from delta_exchange_mcp.config import BASE_URLS, DASHBOARDS, DEFAULT_ENV, DEFAULT_MODE, MODES
+from delta_exchange_mcp.config import (
+    BASE_URLS,
+    DASHBOARDS,
+    DEFAULT_ENV,
+    DEFAULT_MODE,
+    MODES,
+    mode_key,
+)
 
 # Given the session to notify on, brings the tool list up to date for a credential that
 # was just saved, and reports whether anything is still waiting for a restart.
@@ -686,8 +693,11 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         # Trading is stored against the name this client gave in the handshake, never
         # under a shared one: the settings file is read by every client on the machine,
         # and one unscoped value would arm order placement in all of them.
+        # Tested on the key rather than the name: a name made only of punctuation is
+        # truthy but yields no key, and the mode would be dropped while this reported
+        # that trading was on.
         client = _client_name(ctx)
-        if wanted == "trade" and not client:
+        if wanted == "trade" and not mode_key(client):
             return {
                 "status": "invalid",
                 "message": (

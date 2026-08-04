@@ -354,6 +354,27 @@ async def test_choosing_trade_does_not_arm_it_in_the_session_that_chose_it(accep
         assert "place_order" in await session.tool_names()
 
 
+async def test_a_client_whose_name_yields_no_key_is_refused_rather_than_ignored(accepted):
+    """A name of pure punctuation is truthy but scopes to nothing.
+
+    Writing the key would be impossible and skipping it silently would leave the form
+    reporting that trading was on while nothing had been stored at all.
+    """
+    async with connected(client_name="!!!") as session:
+        await session.call("setup_credentials")
+        result = await session.call(
+            "save_credentials",
+            environment="india_testnet",
+            api_key=KEY,
+            api_secret=SECRET,
+            mode="trade",
+        )
+        assert result["status"] == "invalid"
+        assert "trading cannot be turned on for it alone" in result["message"]
+        # Nothing was written, so nothing can arm on the next start either.
+        assert not any(k.startswith("DELTA_MCP_MODE") for k in store.read())
+
+
 async def test_a_client_env_var_still_outranks_the_scoped_setting(monkeypatch):
     """Editing the client's own config stays the most deliberate thing anyone can do."""
     credentialled(mode_for="Claude Desktop")
