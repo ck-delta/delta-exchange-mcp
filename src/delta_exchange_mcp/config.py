@@ -33,6 +33,13 @@ DEFAULT_ENV = "india_prod"
 DEFAULT_MODE = "read"
 MODES: set[str] = {"read", "trade"}
 
+# Trading mode is stored per client rather than under one shared name. The shared file is
+# read by every MCP client on the machine, so an unscoped DELTA_MCP_MODE=trade in it would
+# arm order placement in all of them at once — which is why `load` still refuses to read
+# that name from the file at all. Scoping it by the client's own name keeps the choice
+# where it was made.
+_MODE_PREFIX = "DELTA_MCP_MODE_"
+
 
 TRUTHY = {"1", "true", "yes", "on"}
 
@@ -98,6 +105,42 @@ def _credentials() -> tuple[str | None, str | None]:
         (shared.get("DELTA_API_KEY") or "").strip() or None,
         (shared.get("DELTA_API_SECRET") or "").strip() or None,
     )
+
+
+def mode_key(client: str) -> str:
+    """The settings-file name carrying the trading mode for one named client.
+
+    The name comes from the MCP handshake, where a client identifies itself as anything
+    it likes — "Claude Desktop", "claude-ai", "Visual Studio Code". Everything outside
+    letters and digits collapses to an underscore so the result is a legal dotenv key,
+    and a name with nothing usable in it yields no key rather than a shared one.
+    """
+    slug = "".join(c if c.isalnum() else "_" for c in client).strip("_").upper()
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return f"{_MODE_PREFIX}{slug}" if slug else ""
+
+
+def mode_for_client(client: str) -> Mode:
+    """The mode a named client may run in.
+
+    `DELTA_MCP_MODE` in the process environment still wins, because that is the client's
+    own configuration and editing it is the most deliberate thing anyone can do. Below it
+    sits this client's own scoped key, which is what the in-chat form writes. An
+    unrecognised value reads as `read`: the file is hand-editable, and a typo there must
+    not be the thing that arms order placement.
+    """
+    from_env = (os.environ.get("DELTA_MCP_MODE", "") or "").strip().lower()
+    if from_env:
+        if from_env not in MODES:
+            raise ValueError(f"DELTA_MCP_MODE must be one of {sorted(MODES)}, got {from_env!r}")
+        return from_env  # type: ignore[return-value]
+
+    key = mode_key(client)
+    if not key:
+        return DEFAULT_MODE  # type: ignore[return-value]
+    saved = (store.read().get(key) or "").strip().lower()
+    return saved if saved in MODES else DEFAULT_MODE  # type: ignore[return-value]
 
 
 def load() -> Config:

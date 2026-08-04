@@ -102,6 +102,14 @@ Those `_meta` arguments are why `pyproject.toml` floors `mcp` at 1.26 — `meta=
 
 `tools/trading.py` exposes the authenticated write tools (place/edit/cancel order, cancel-all, place/edit/cancel batch, place/edit bracket, set-leverage, change-margin, close-all, auto-topup). Its `register(mcp, client, audit)` is gated on `(cfg.has_credentials and cfg.mode == "trade")` in `build_server`; `DELTA_MCP_MODE` defaults to `read`, so the surface is off unless explicitly opted into.
 
+### Trading is enabled per client, and that is load-bearing
+
+`DELTA_MCP_MODE` is read **only from the process environment**, never from the shared file, because every MCP client on the machine reads that file and one value in it would arm order placement in all of them. The in-chat form can still turn trading on, because it writes a *scoped* name instead: `config.mode_key(client)` produces `DELTA_MCP_MODE_<CLIENT>` from the name the client gave in the MCP handshake, punctuation collapsed to underscores, and `config.mode_for_client(name)` resolves the environment first and that key second.
+
+A client only identifies itself during the handshake, which happens after `build_server` has finished assembling the tool list, so the entitlement is applied at the **first `tools/list` of a session** — `build_server` wraps that request handler, arms trading before delegating, and the mutating tools appear in that very first listing rather than behind a later notification. It is decided once per session on purpose: choosing trade in the form writes the key but must not arm order placement in the session that asked for it. Regression tests: `test_trading_arms_only_for_the_client_it_was_enabled_for`, `test_choosing_trade_does_not_arm_it_in_the_session_that_chose_it`, `test_a_client_env_var_still_outranks_the_scoped_setting`.
+
+`get_connection_status` reports `mode` (live now) and `mode_after_restart` (what this client is entitled to), and folds the difference into `restart_required` — otherwise it would report nothing outstanding while trading was still waiting, which is the contradiction the field exists to prevent.
+
 Conventions in `trading.py`:
 - Every mutating tool takes `dry_run: bool`. The shared `_finish(tool, method, path, payload, dry_run)` helper strips `None` keys, and when `dry_run` returns `{dry_run, method, path, payload}` **without** any HTTP call; otherwise it sends via `client.post/put/delete` and records to the audit log on both success and `DeltaApiError`.
 - Order-level boolean flags (`post_only`, `reduce_only`, `cancel_*`) are Delta **string enums** — convert with `_bs()` to `"true"`/`"false"`. Position-level flags (`auto_topup`, `close_all_*`) are real JSON booleans.

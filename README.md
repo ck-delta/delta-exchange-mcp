@@ -140,7 +140,12 @@ them.
 > sending, convert between contracts and coins, or judge whether an order makes sense. Those
 > are your responsibility. Try `DELTA_MCP_ENV=india_testnet` first.
 
-Enable it in the config of the one client you mean to trade from:
+The quickest way is the credential form: ask your assistant to connect your Delta account,
+pick **Read and trade** in "What should the assistant be able to do?", and restart that app.
+Trading turns on for that app alone — every other client on the machine stays read-only,
+because the form stores the choice under that client's own name rather than a shared one.
+
+Or set it yourself, in the config of the one client you mean to trade from:
 
 ```jsonc
 "delta-exchange-mcp": {
@@ -150,10 +155,13 @@ Enable it in the config of the one client you mean to trade from:
 }
 ```
 
-This is the only setting that cannot come from the shared file described in
-[Add your API key](#add-your-api-key). Everything else there is convenience; this one
-places real orders, so it stays scoped to the single client whose config you edited
-rather than arming every assistant on the machine at once.
+This is the one setting that is never read from the shared file described in
+[Add your API key](#add-your-api-key) under its own name. Everything else there is
+convenience; this one places real orders, so it is always tied to one client rather than
+arming every assistant on the machine at once. The form does not change that — it writes
+`DELTA_MCP_MODE_<CLIENT>`, keyed on the name the client gives during its handshake, and
+that key is read only by the client it names. `DELTA_MCP_MODE` in a client's own config
+still wins over it.
 
 Safety features:
 
@@ -250,7 +258,7 @@ through to the file.
 | `DELTA_MCP_ENV` | `india_prod` | yes | `india_prod`, `india_testnet`, or `india_devnet`. |
 | `DELTA_API_KEY` | _(unset)_ | yes | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
 | `DELTA_API_SECRET` | _(unset)_ | yes | API secret matching `DELTA_API_KEY`. |
-| `DELTA_MCP_MODE` | `read` | **no** | `trade` registers the trading tools (requires API key + secret). Per client on purpose — see [Trading](#trading-opt-in). |
+| `DELTA_MCP_MODE` | `read` | **no** | `trade` registers the trading tools (requires API key + secret). Per client on purpose — see [Trading](#trading-opt-in). The credential form writes a per-client `DELTA_MCP_MODE_<CLIENT>` into the shared file instead; this name still wins over it. |
 | `DELTA_MCP_DEBUG` | _(unset)_ | yes | `1`/`true`/`yes`/`on` writes HTTP request URLs and response bodies to a log file (see [Debugging](#debugging--reporting-a-bug)). |
 | `DELTA_MCP_DEBUG_FILE` | _(auto)_ | yes | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
 | `DELTA_MCP_AUDIT` | _(on in trade mode)_ | yes | Set `off`/`false`/`0`/`no` to disable the trading audit log. On by default whenever `DELTA_MCP_MODE=trade`. |

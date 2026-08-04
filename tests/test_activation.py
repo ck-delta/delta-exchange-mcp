@@ -45,7 +45,7 @@ class Session:
 
 
 @asynccontextmanager
-async def connected(cfg=None):
+async def connected(cfg=None, client_name=None):
     """A client talking to a server started the way `main` starts it.
 
     The SDK's own `create_connected_server_and_client_session` builds initialization
@@ -70,8 +70,13 @@ async def connected(cfg=None):
                 if isinstance(message, types.ServerNotification):
                     box["session"].notifications.append(message.root)
 
+            info = (
+                types.Implementation(name=client_name, version="1")
+                if client_name
+                else None
+            )
             async with ClientSession(
-                client_read, client_write, message_handler=collect
+                client_read, client_write, message_handler=collect, client_info=info
             ) as client:
                 initialized = await client.initialize()
                 box["session"] = Session(client, initialized)
@@ -270,6 +275,91 @@ async def test_a_client_pinning_the_same_environment_is_not_reported(accepted, m
         result = await save(session)
         assert result["status"] == "saved"
         assert (await session.call("get_connection_status"))["overridden_by_client"] == []
+
+
+# --- trading, scoped to the client that asked for it ---------------------------------
+
+
+def credentialled(mode_for=None):
+    """A settings file with a working key, and optionally a client entitled to trade."""
+    values = {
+        "DELTA_MCP_ENV": "india_testnet",
+        "DELTA_API_KEY": KEY,
+        "DELTA_API_SECRET": SECRET,
+    }
+    if mode_for:
+        values[config_mod.mode_key(mode_for)] = "trade"
+    store.write(values)
+
+
+async def test_trading_arms_only_for_the_client_it_was_enabled_for():
+    """The settings file is shared by every client on the machine.
+
+    An unscoped mode in it would hand order placement to all of them at once, which is
+    why `load` refuses to read that name from the file. The scoped name is what the form
+    writes, and only the client whose handshake matches it gets the mutating tools.
+    """
+    credentialled(mode_for="Claude Desktop")
+
+    async with connected(client_name="Claude Desktop") as session:
+        names = await session.tool_names()
+        assert "place_order" in names
+        assert "get_trading_status" in names
+        assert (await session.call("get_connection_status"))["mode"] == "trade"
+
+    async with connected(client_name="Cursor") as session:
+        names = await session.tool_names()
+        assert "place_order" not in names
+        status = await session.call("get_connection_status")
+        assert status["mode"] == "read"
+        assert status["mode_after_restart"] == "read"
+
+
+async def test_the_client_name_is_matched_however_it_is_punctuated():
+    """Clients name themselves freely — "Claude Desktop", "claude-ai", "claude.ai"."""
+    credentialled(mode_for="claude-ai")
+    async with connected(client_name="Claude AI") as session:
+        assert "place_order" in await session.tool_names()
+
+
+async def test_choosing_trade_does_not_arm_it_in_the_session_that_chose_it(accepted):
+    """The restart is the point. Order placement appearing mid-conversation, in the same
+    turn that asked for it, is exactly what the whole gate exists to prevent.
+    """
+    async with connected(client_name="Claude Desktop") as session:
+        await session.call("setup_credentials")
+        result = await session.call(
+            "save_credentials",
+            environment="india_testnet",
+            api_key=KEY,
+            api_secret=SECRET,
+            mode="trade",
+        )
+        assert result["status"] == "saved"
+        assert "Restart this app to turn trading on" in result["message"]
+
+        # The reads came up; the mutations did not.
+        assert "get_positions" in await session.tool_names()
+        assert "place_order" not in await session.tool_names()
+
+        status = await session.call("get_connection_status")
+        assert status["mode"] == "read"
+        assert status["mode_after_restart"] == "trade"
+        # It must not claim everything is done while trading still waits.
+        assert status["restart_required"] is True
+
+    # The written entitlement is what the next start reads.
+    assert store.read()[config_mod.mode_key("Claude Desktop")] == "trade"
+    async with connected(client_name="Claude Desktop") as session:
+        assert "place_order" in await session.tool_names()
+
+
+async def test_a_client_env_var_still_outranks_the_scoped_setting(monkeypatch):
+    """Editing the client's own config stays the most deliberate thing anyone can do."""
+    credentialled(mode_for="Claude Desktop")
+    monkeypatch.setenv("DELTA_MCP_MODE", "read")
+    async with connected(client_name="Claude Desktop") as session:
+        assert "place_order" not in await session.tool_names()
 
 
 def rejecting(code, detail="delta api error: raw [http 401] (context={...})", ip=""):

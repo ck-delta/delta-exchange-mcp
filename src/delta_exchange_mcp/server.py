@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 
 import anyio
+import mcp.types as types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.lowlevel import NotificationOptions
 from mcp.server.models import InitializationOptions
@@ -36,8 +38,11 @@ Each is read from the environment your MCP client launched this server with, and
 falls back to a shared file at ~/.delta-exchange-mcp/config.env that every client
 on this machine reads. That file is created with instructions in it on first run,
 so an API key is set once rather than pasted into each client's own config.
-DELTA_MCP_MODE is the exception: it is never read from the shared file, so enabling
-trading in one client cannot arm every assistant on the machine.
+DELTA_MCP_MODE is the exception. That name is never read from the shared file, because a
+value there would arm order placement in every client on the machine at once. Trading is
+stored per client instead, under DELTA_MCP_MODE_<CLIENT> keyed on the name the client
+gives in the handshake — which is what the in-chat form writes, and what the first
+tools/list of a session applies.
 
 Prod and testnet API keys are separate; DELTA_MCP_ENV must match the dashboard the
 key was created on. The server speaks MCP over stdio and is normally launched by a
@@ -60,6 +65,20 @@ way is stored in the conversation and visible to you. get_connection_status repo
 whether a key is configured, which environment it points at, and whether this client
 still needs restarting.
 """
+
+
+def connected_client_name(mcp: FastMCP) -> str:
+    """What the connected client called itself in the handshake, or "" before there is one.
+
+    Only reachable from inside a request: the session hangs off the request context, and
+    reading that context outside one raises rather than returning None.
+    """
+    try:
+        session = mcp._mcp_server.request_context.session
+    except LookupError:
+        return ""
+    params = session.client_params
+    return params.clientInfo.name if params and params.clientInfo else ""
 
 
 def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
@@ -128,24 +147,33 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
         # shares it, so a key can appear without this process having been told.
         stored = config_mod.load()
         overridden = credentials.overridden_by_client()
+        # What this client is entitled to after its next start, which is not what it is
+        # running now if trading was chosen in the form during this session.
+        entitled = config_mod.mode_for_client(connected_client_name(mcp))
+        trade_pending = entitled == "trade" and live.mode != "trade"
         return {
             "environment": live.env,
             "credentials_configured": stored.has_credentials,
             "account_tools_available": live.has_credentials,
             "mode": live.mode,
+            "mode_after_restart": entitled,
             # A restart re-reads the file, so it cannot help when this client passes its
             # own value on every launch. `overridden_by_client` is then what to act on:
             # those names have to come out of the client's own MCP entry.
             "restart_required": not overridden
             and stored.has_credentials
-            and (restart_pending or not live.has_credentials),
+            and (restart_pending or trade_pending or not live.has_credentials),
             "overridden_by_client": overridden,
         }
 
     trade_audit = None
-    if cfg.has_credentials and cfg.mode == "trade":
-        trade_audit = audit_log.configure(cfg)
-        trading.register(mcp, client, trade_audit)
+
+    def arm_trading(armed: config_mod.Config, armed_client: DeltaClient) -> None:
+        """Register the mutating tools, with the audit log that has to accompany them."""
+        nonlocal trade_audit, live
+        trade_audit = audit_log.configure(armed)
+        trading.register(mcp, armed_client, trade_audit)
+        live = armed
 
         @mcp.tool()
         def get_trading_status() -> dict[str, object]:
@@ -154,9 +182,41 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
             Use this to tell the user that mutations are enabled and where the audit log lives.
             """
             return {
-                "mode": cfg.mode,
+                "mode": "trade",
                 "audit_log_path": str(trade_audit.path) if trade_audit else None,
             }
+
+    if cfg.has_credentials and cfg.mode == "trade":
+        arm_trading(cfg, client)
+
+    # A trading mode chosen in the form is stored under the choosing client's own name,
+    # and a client only says who it is during the handshake — after this function has
+    # finished building the tool list. So the first `tools/list` of a session is where a
+    # scoped entitlement gets applied, before the list is produced, which puts the
+    # mutating tools in that very first listing rather than behind a later notification.
+    #
+    # Decided once per session on purpose. Choosing trade mid-conversation writes the key
+    # but must not arm order placement in the session that wrote it: that still waits for
+    # the restart, which is the deliberate act this whole gate exists to require.
+    entitlement_checked = False
+    list_tools = mcp._mcp_server.request_handlers[types.ListToolsRequest]
+
+    async def arm_before_listing(req: types.ListToolsRequest) -> types.ServerResult:
+        nonlocal entitlement_checked
+        if not entitlement_checked:
+            entitlement_checked = True
+            name = connected_client_name(mcp)
+            if (
+                name
+                and trade_audit is None
+                and live.has_credentials
+                and config_mod.mode_for_client(name) == "trade"
+            ):
+                armed = replace(live, mode="trade")
+                arm_trading(armed, DeltaClient(armed))
+        return await list_tools(req)
+
+    mcp._mcp_server.request_handlers[types.ListToolsRequest] = arm_before_listing
 
     if log_path is not None:
 

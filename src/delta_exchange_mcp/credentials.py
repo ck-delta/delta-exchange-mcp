@@ -13,7 +13,7 @@ import httpx
 
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
-from delta_exchange_mcp.config import BASE_URLS, Config, load
+from delta_exchange_mcp.config import BASE_URLS, Config, load, mode_key
 from delta_exchange_mcp.errors import DeltaApiError
 
 
@@ -95,13 +95,21 @@ async def check(env: str, key: str, secret: str) -> Check:
         await client.aclose()
 
 
-def save(env: str, key: str, secret: str) -> str | None:
+def save(env: str, key: str, secret: str, client: str = "", mode: str = "") -> str | None:
     """Write the pair and its environment, returning a message if anything failed.
 
     The environment goes in alongside them deliberately. It is not a separate preference
     but part of what makes the key usable at all, and saving a testnet key while the file
     still says india_prod produces InvalidApiKey on every call.
+
+    `client` and `mode` travel together or not at all: a trading mode is only meaningful
+    scoped to the client that chose it, and writing one unscoped would arm order placement
+    in every client on the machine. `login` passes neither, because a terminal has no
+    client to scope to.
     """
-    return store.write(
-        {"DELTA_MCP_ENV": env, "DELTA_API_KEY": key, "DELTA_API_SECRET": secret}
-    )
+    values = {"DELTA_MCP_ENV": env, "DELTA_API_KEY": key, "DELTA_API_SECRET": secret}
+    if client and mode:
+        scoped = mode_key(client)
+        if scoped:
+            values[scoped] = mode
+    return store.write(values)

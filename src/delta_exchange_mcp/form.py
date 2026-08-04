@@ -54,7 +54,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 
 from delta_exchange_mcp import credentials, store
-from delta_exchange_mcp.config import BASE_URLS, DASHBOARDS, DEFAULT_ENV
+from delta_exchange_mcp.config import BASE_URLS, DASHBOARDS, DEFAULT_ENV, DEFAULT_MODE, MODES
 
 # Given the session to notify on, brings the tool list up to date for a credential that
 # was just saved, and reports whether anything is still waiting for a restart.
@@ -141,6 +141,13 @@ _TEMPLATE = """<!DOCTYPE html>
   .choice .site { color: var(--faint); font-size: 13px; }
 
   .lab { display: block; margin-bottom: 4px; }
+  /* A native select on purpose: its menu is drawn by the browser outside the frame, so
+     it cannot be clipped by the app's own bounds the way a hand-built one would be. */
+  select { font: 13px/1.5 var(--sans); width: 100%; box-sizing: border-box; padding: 8px 10px;
+      margin: 0 0 6px; color: var(--ink); background: var(--field);
+      border: 1px solid var(--line); border-radius: var(--r-sm); }
+  .note { margin: 0 0 14px; font-size: 12px; color: var(--faint); }
+  .note:empty { display: none; }
   input[type=text], input[type=password] {
       font: 13px/1.5 var(--mono); letter-spacing: .2px; width: 100%; box-sizing: border-box;
       padding: 8px 10px; margin: 0 0 12px; color: var(--ink); background: var(--field);
@@ -206,6 +213,13 @@ _TEMPLATE = """<!DOCTYPE html>
       <legend>Where was your key created?</legend>
     </fieldset>
 
+    <label class="lab" for="mode">What should the assistant be able to do?</label>
+    <select id="mode">
+      <option value="read">Read only &mdash; balances, positions and orders</option>
+      <option value="trade">Read and trade &mdash; also place and cancel orders</option>
+    </select>
+    <p class="note" id="mode-note"></p>
+
     <label class="lab" for="key">API key</label>
     <input id="key" type="password" autocomplete="off" autocapitalize="none"
            spellcheck="false" placeholder="paste it here">
@@ -241,6 +255,8 @@ _TEMPLATE = """<!DOCTYPE html>
   var saveEl = document.getElementById("save");
   var createEl = document.getElementById("create");
   var stateEl = document.getElementById("state");
+  var modeEl = document.getElementById("mode");
+  var modeNote = document.getElementById("mode-note");
   var againEl = document.getElementById("again");
   var doneWho = document.getElementById("done-who");
   var doneWhere = document.getElementById("done-where");
@@ -361,6 +377,18 @@ _TEMPLATE = """<!DOCTYPE html>
   keyEl.addEventListener("input", refreshSaveState);
   secretEl.addEventListener("input", refreshSaveState);
 
+  // Says what the choice costs before it is made. Trading is scoped to this client, so
+  // the reassurance about the others is the part worth stating.
+  function syncModeNote() {
+    modeNote.textContent = modeEl.value === "trade"
+      ? "Trading turns on after you restart this app. Other apps on this computer stay "
+        + "read only."
+      : "";
+    resize();
+  }
+
+  modeEl.addEventListener("change", syncModeNote);
+
   againEl.addEventListener("click", function () {
     document.body.classList.remove("done");
     refreshSaveState();
@@ -389,7 +417,9 @@ _TEMPLATE = """<!DOCTYPE html>
     // would report a failure over a key that was in fact saved.
     request("tools/call", {
       name: "save_credentials",
-      arguments: { environment: chosenEnv(), api_key: key, api_secret: secret },
+      arguments: {
+        environment: chosenEnv(), api_key: key, api_secret: secret, mode: modeEl.value,
+      },
     }, 120000).then(function (result) {
       var payload = readResult(result);
       var status = payload.status || "failed";
@@ -449,6 +479,18 @@ _TEMPLATE = """<!DOCTYPE html>
     // The theme and the palette arrive here. Discarding this result is what left the view
     // styling itself off the operating system rather than off the client it renders in.
     applyHostContext(result && result.hostContext);
+    // The mode already in force for this client. Without asking, the control would show
+    // "Read only" to someone who had already enabled trading, and saving would quietly
+    // take it away again.
+    request("tools/call", { name: "get_connection_status", arguments: {} }, 15000)
+      .then(function (status) {
+        var now = readResult(status);
+        // What it will be after a restart, not what is live: someone who chose trading a
+        // moment ago must not be shown "Read only" and quietly downgraded on the next save.
+        var current = now && (now.mode_after_restart || now.mode);
+        if (current) { modeEl.value = current; syncModeNote(); }
+      })
+      .catch(function () {});
     resize();
   }).catch(function (err) {
     say("This client could not open the form: " + err.message, "err");
@@ -540,6 +582,21 @@ def _override_message(overridden: list[str]) -> str:
     )
 
 
+def _client_name(ctx: Context) -> str:
+    """What the connected client called itself, or "" when there is no session to ask.
+
+    The session hangs off the request context, and FastMCP raises rather than returning
+    None when there is none — which is what calling the tool in-process does, as the
+    tests do. An empty name is handled by the caller, since a trading mode that cannot be
+    scoped to a client must not be written at all.
+    """
+    try:
+        params = ctx.session.client_params
+    except ValueError:
+        return ""
+    return params.clientInfo.name if params and params.clientInfo else ""
+
+
 def _opened_message() -> str:
     """What the model is told after opening the form.
 
@@ -597,7 +654,7 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
 
     @mcp.tool(meta=_APP_ONLY)
     async def save_credentials(
-        environment: str, api_key: str, api_secret: str, ctx: Context
+        environment: str, api_key: str, api_secret: str, ctx: Context, mode: str = "read"
     ) -> dict[str, str]:
         """Save a key typed into the credential form. Called by the form, not by you.
 
@@ -617,6 +674,27 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
                 "message": f"{environment!r} is not one of {sorted(BASE_URLS)}.",
             }
 
+        wanted = (mode or "").strip().lower() or DEFAULT_MODE
+        if wanted not in MODES:
+            return {
+                "status": "invalid",
+                "message": f"{mode!r} is not one of {sorted(MODES)}.",
+            }
+
+        # Trading is stored against the name this client gave in the handshake, never
+        # under a shared one: the settings file is read by every client on the machine,
+        # and one unscoped value would arm order placement in all of them.
+        client = _client_name(ctx)
+        if wanted == "trade" and not client:
+            return {
+                "status": "invalid",
+                "message": (
+                    "This client did not say who it is during the handshake, so trading "
+                    "cannot be turned on for it alone. Save with read only, then set "
+                    "DELTA_MCP_MODE=trade in this client's own configuration."
+                ),
+            }
+
         key = (api_key or "").strip()
         secret = (api_secret or "").strip()
         if not key or not secret:
@@ -632,7 +710,7 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         if result.reachable and not result.ok:
             return {"status": "rejected", "message": _rejection(env, result)}
 
-        problem = credentials.save(env, key, secret)
+        problem = credentials.save(env, key, secret, client, wanted)
         if problem is not None:
             return {"status": "failed", "message": problem}
 
@@ -650,11 +728,21 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         # so the only open question is whether this client acted on being told the list
         # changed, and asking it something settles that faster than a restart nobody needed.
         ready = await activate(ctx.session) if activate is not None else False
-        next_step = (
+        reads = (
             "Your account tools are live in this session — just ask about your account. "
             "If this client does not show them yet, restart it."
             if ready
             else "Restart this client to use your account."
+        )
+        # Trading is never armed in the session that asked for it. `activate` cannot see
+        # that it was asked for either — the mode it reads comes from the environment, and
+        # what was just written is scoped to this client in the file — so the restart has
+        # to be stated here rather than inferred from what `activate` returned.
+        next_step = (
+            f"{reads} Restart this app to turn trading on for it; other apps on this "
+            "computer stay read only."
+            if wanted == "trade"
+            else reads
         )
 
         if not result.reachable:
@@ -682,8 +770,10 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
             "path": str(store.path()),
             "next_step": next_step,
             "message": (
-                f"Connected{who}. Saved to {store.path()}. {next_step} Trading stays "
-                "off — that is enabled per client, not here."
+                f"Connected{who}. Saved to {store.path()}. {next_step}"
+                if wanted == "trade"
+                else f"Connected{who}. Saved to {store.path()}. {next_step} Trading stays "
+                "off — you can turn it on for this app in the same form."
             ),
         }
 

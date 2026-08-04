@@ -49,9 +49,12 @@ DELTA_API_KEY=
 DELTA_API_SECRET=
 DELTA_MCP_ENV=india_prod
 
-# Trading is deliberately NOT read from this file. Enable it in the config of the
-# one client you mean to trade from, so switching it on in a single place cannot
-# arm every assistant on this machine at once.
+# Trading is stored per client, never under the shared name below, so switching it
+# on in one place cannot arm every assistant on this machine at once. The in-chat
+# form writes the scoped name for you; the client name comes from its handshake.
+# DELTA_MCP_MODE_CLAUDE_DESKTOP=trade
+#
+# This unscoped name is read only from a client's own environment, never from here:
 # DELTA_MCP_MODE=trade
 """
 
