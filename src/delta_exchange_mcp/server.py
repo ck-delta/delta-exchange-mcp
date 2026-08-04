@@ -56,14 +56,15 @@ client rather than by hand.
 INSTRUCTIONS = """\
 Delta Exchange India. Market data needs no setup and always works. The user's own account
 — positions, orders, fills, balances — is readable only when an API key is configured,
-and placing orders additionally requires them to set mode to trade in their MCP client.
+and placing orders additionally requires trading to be turned on for this client.
 
 If the user asks about their own account and no account tool is available, call
-setup_credentials: it opens a form they type the key into. Never ask for an API key or
-secret in the conversation, and never accept one sent as a message — anything sent that
-way is stored in the conversation and visible to you. get_connection_status reports
-whether a key is configured, which environment it points at, and whether this client
-still needs restarting.
+setup_credentials: it opens a form they type the key into. The same form is where trading
+is turned on, so call it for that too rather than telling them to edit a config file.
+Never ask for an API key or secret in the conversation, and never accept one sent as a
+message — anything sent that way is stored in the conversation and visible to you.
+get_connection_status reports whether a key is configured, which environment it points
+at, what this client may do now, what it may do after a restart, and whether one is due.
 """
 
 

@@ -644,11 +644,11 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         """Open a form for the user to enter their Delta API key, kept out of the chat.
 
         Call this whenever the user wants to log in, sign in, connect their Delta
-        account, add or replace an API key, or when an account tool is unavailable
-        because none is configured. Call this first even when they say "login" — the
-        `login` terminal command is the fallback for clients that cannot display a form,
-        and whether this one can is reported back to you by this tool. Never ask for the
-        key or secret in the conversation instead.
+        account, add or replace an API key, turn trading on or off for this client, or
+        when an account tool is unavailable because none is configured. Call this first
+        even when they say "login" — the `login` terminal command is the fallback for
+        clients that cannot display a form, and whether this one can is reported back to
+        you by this tool. Never ask for the key or secret in the conversation instead.
         """
         nonlocal shown
         shown = True
