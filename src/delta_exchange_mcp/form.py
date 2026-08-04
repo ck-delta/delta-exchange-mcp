@@ -633,7 +633,9 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
     the file back, meaning the worst a caller who does not already know the credentials
     can achieve is to overwrite them with a pair Delta accepts — which they would have
     to own. `shown` narrows even that, by requiring the form to have been opened first,
-    which is something the user can see happen.
+    which is something the user can see happen. The `mode` argument does not widen it:
+    it is written scoped to the calling client and takes effect only on that client's
+    next start, so the most it can do is arm trading against a key its caller supplied.
     """
     shown = False
 
