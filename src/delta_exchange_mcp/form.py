@@ -27,6 +27,22 @@ Three constraints came out of that probe and are load-bearing here:
 Not every client renders MCP Apps. `setup_credentials` therefore returns text that names
 the file and the `login` command as well, so on a client that shows nothing the model
 still has something correct to say.
+
+Two later facts come from the spec itself (`src/spec.types.ts` in
+modelcontextprotocol/ext-apps) rather than from the probe. The host's reply to
+`ui/initialize` carries a `hostContext` with the active theme and a palette of CSS custom
+properties, refreshed by a `ui/notifications/host-context-changed` notification; the view
+reads both and falls back to Delta's own neutrals, so a host that sends nothing still looks
+deliberate. And `prefersBorder` is the field that decides who draws the box — omitting it
+left Claude Desktop drawing one and this view drawing a second inside it. There is no
+`preferredSize` field; the height is whatever the view reports.
+
+Colour is split on purpose. Surfaces, text and borders prefer the host's tokens, so the
+form sits inside whatever theme the client is running. Brand and semantic colours are
+always Delta's own, taken from the `--brand-india-*`, `--positive-*` and `--negative-*`
+families on delta.exchange, because those are what make it recognisably Delta rather than
+a generic form. The one brand asset that could not come across is the Aileron typeface —
+it is a web font, and fetching it would hit the same policy that blanks the frame.
 """
 
 from __future__ import annotations
@@ -80,64 +96,133 @@ _TEMPLATE = """<!DOCTYPE html>
 <meta name="color-scheme" content="light dark">
 <title>Connect your Delta Exchange account</title>
 <style>
-  html, body { margin: 0; }
-  body { font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; padding: 14px; }
-  .card { border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-          border-radius: 10px; padding: 16px; max-width: 520px; }
-  h1 { font-size: 15px; margin: 0 0 4px; }
-  .sub { margin: 0 0 14px; opacity: .72; font-size: 13px; }
-  fieldset { border: 0; padding: 0; margin: 0 0 12px; }
-  legend { font-size: 12px; opacity: .8; padding: 0 0 5px; }
-  .choice { display: block; margin-bottom: 4px; font-size: 13px; }
-  .choice input { margin-right: 7px; }
-  .choice .site { opacity: .6; }
-  label.field { display: block; font-size: 12px; opacity: .8; margin-bottom: 3px; }
+  :root {
+    color-scheme: light dark;
+    /* Delta's own, always. These are the colours that make it Delta rather than a form. */
+    --brand: #fe6c02;
+    --brand-hover: #e76202;
+    --on-brand: #ffffff;
+    --positive: light-dark(#00a876, #33b991);
+    --negative: light-dark(#dc4e4e, #ff5c5c);
+    /* The host's, when it sends them. Delta's neutrals are the fallback, so the form is
+       never left styling itself off nothing. */
+    --ink: var(--color-text-primary, light-dark(#121214, #e1e1e2));
+    --muted: var(--color-text-secondary, #8e9298);
+    --faint: var(--color-text-tertiary, light-dark(#adb1b7, #71747a));
+    --line: var(--color-border-primary,
+            light-dark(rgba(24, 25, 30, .12), rgba(255, 255, 255, .1)));
+    --field: var(--color-background-secondary, light-dark(#f3f4f6, #2d303a));
+    --sans: var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif);
+    --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    --r: var(--border-radius-md, 8px);
+    --r-sm: var(--border-radius-sm, 6px);
+  }
+
+  /* An opaque background on either of these paints over the chat behind the frame. */
+  html, body { margin: 0; background: transparent; }
+  body { font: 14px/1.5 var(--sans); color: var(--ink); }
+  /* The host is asked to draw the box, so this only keeps content off the frame edge on a
+     host that draws none. */
+  .card { padding: 4px 2px 2px; max-width: 520px; }
+
+  .head { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; }
+  .mark { width: 20px; height: 20px; flex: none; }
+  h1 { font: 600 15px/1.35 var(--sans); margin: 0; }
+  .sub { margin: 0 0 16px; color: var(--muted); }
+
+  fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+  legend, .lab { color: var(--muted); font-size: 13px; padding: 0; }
+  legend { margin-bottom: 6px; }
+
+  /* Native radios and checkbox, tinted to the brand. Restyling them by hand would cost
+     their keyboard behaviour and their theme-correct chrome for nothing. */
+  input[type=radio], input[type=checkbox] { accent-color: var(--brand); }
+  .choice { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; cursor: pointer; }
+  .choice .site { color: var(--faint); font-size: 13px; }
+
+  .lab { display: block; margin-bottom: 4px; }
   input[type=text], input[type=password] {
-      font: inherit; width: 100%; box-sizing: border-box; padding: 7px 9px;
-      margin-bottom: 10px; border-radius: 6px; color: inherit; background: transparent;
-      border: 1px solid color-mix(in srgb, currentColor 28%, transparent); }
-  .reveal { font-size: 12px; opacity: .75; margin-bottom: 12px; display: block; }
-  .reveal input { margin-right: 6px; }
-  button { font: inherit; padding: 8px 15px; border-radius: 6px; cursor: pointer;
-           border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
-           background: transparent; color: inherit; }
-  button[disabled] { opacity: .45; cursor: default; }
-  button.link { border: 0; padding: 0; text-decoration: underline; font-size: 13px;
-                opacity: .85; }
-  .hint { font-size: 12px; opacity: .72; margin: 0 0 14px; }
-  #state { margin-top: 12px; font-size: 13px; min-height: 1.4em; }
-  .ok { color: #16a34a; } .err { color: #dc2626; }
+      font: 13px/1.5 var(--mono); letter-spacing: .2px; width: 100%; box-sizing: border-box;
+      padding: 8px 10px; margin: 0 0 12px; color: var(--ink); background: var(--field);
+      border: 1px solid var(--line); border-radius: var(--r-sm); }
+  input::placeholder { font-family: var(--sans); letter-spacing: 0; color: var(--faint); }
+
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+         margin-bottom: 16px; flex-wrap: wrap; }
+  .reveal { display: flex; align-items: center; gap: 7px; color: var(--muted);
+            font-size: 13px; cursor: pointer; }
+
+  button { font: 500 14px/1 var(--sans); padding: 9px 16px; border: 0; cursor: pointer;
+           border-radius: var(--r-sm); background: var(--brand); color: var(--on-brand); }
+  button:hover { background: var(--brand-hover); }
+  button[aria-disabled=true], button[aria-disabled=true]:hover {
+      background: color-mix(in srgb, var(--ink) 14%, transparent);
+      color: var(--faint); cursor: not-allowed; }
+  button.link, button.link:hover { background: none; color: var(--muted); padding: 0;
+      font-size: 13px; font-weight: 400; text-decoration: underline;
+      text-underline-offset: 2px; }
+  button.link[aria-disabled=true] { background: none; color: var(--faint); }
+
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 3px; }
+
+  #state:not(:empty) { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  #state.err { color: var(--negative); }
+
+  #done { display: none; }
+  body.done #entry { display: none; }
+  body.done #done { display: block; }
+  #done .who { font: 600 14px/1.4 var(--sans); color: var(--positive); margin: 0 0 5px; }
+  #done p { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+  #done .next { margin-bottom: 12px; }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Connect your Delta Exchange account</h1>
-  <p class="sub">What you type here is saved to a file on this computer. It does not
-  become part of this conversation, and the assistant cannot read it.</p>
+  <div class="head">
+    <!-- Delta's own mark, inlined. The one gradient in the original is flattened to its
+         midpoint: it is imperceptible at 20px, and painting it needs a fragment reference
+         written in the same syntax the test bans to keep external fetches out. -->
+    <svg class="mark" viewBox="0 0 53 52" aria-hidden="true">
+      <path fill="#FD7D02" d="M17.834 17.334 35.166 26 52.5 17.334 17.834 0v17.334Z"/>
+      <path fill="#219b21" d="M17.834 34.667V52L52.5 34.667 35.166 26l-17.332 8.667Z"/>
+      <path fill="#2CB72C" d="M52.5 34.667V17.333L35.167 26 52.5 34.667Z"/>
+      <path fill="#FF9300" d="M17.832 17.333v17.334L.5 26l17.332-8.667Z"/>
+    </svg>
+    <h1>Connect your Delta Exchange account</h1>
+  </div>
 
-  <fieldset id="envs">
-    <legend>Where was your key created?</legend>
-  </fieldset>
+  <div id="done">
+    <p class="who" id="done-who"></p>
+    <p id="done-where"></p>
+    <p class="next" id="done-next"></p>
+    <button id="again" class="link" type="button">Use a different key</button>
+  </div>
 
-  <p class="hint">
-    A key only works on the site it was created on. Under Account &rarr; API Keys,
-    the <strong>Read Data</strong> permission is enough unless you intend to trade,
-    and the key needs your IP whitelisted.
-    <button id="create" class="link" type="button" disabled>Open the API keys page</button>
-  </p>
+  <div id="entry">
+    <p class="sub">Type your key here rather than in the chat. It is saved to a file on
+    this computer, and the assistant never sees it.</p>
 
-  <label class="field" for="key">API key</label>
-  <input id="key" type="password" autocomplete="off" spellcheck="false"
-         placeholder="paste or type it here">
+    <fieldset id="envs">
+      <legend>Where was your key created?</legend>
+    </fieldset>
 
-  <label class="field" for="secret">API secret</label>
-  <input id="secret" type="password" autocomplete="off" spellcheck="false"
-         placeholder="shown only once, when you create the key">
+    <label class="lab" for="key">API key</label>
+    <input id="key" type="password" autocomplete="off" autocapitalize="none"
+           spellcheck="false" placeholder="paste it here">
 
-  <label class="reveal"><input id="show" type="checkbox">Show what I typed</label>
+    <label class="lab" for="secret">API secret</label>
+    <input id="secret" type="password" autocomplete="off" autocapitalize="none"
+           spellcheck="false" placeholder="shown only once, when you create the key">
 
-  <button id="save" type="button" disabled>Check and save</button>
-  <div id="state">Starting&hellip;</div>
+    <div class="row">
+      <label class="reveal"><input id="show" type="checkbox">Show what I typed</label>
+      <button id="create" class="link" type="button" aria-disabled="true">
+        Get a key &mdash; Read Data is enough</button>
+    </div>
+
+    <button id="save" type="button" aria-disabled="true">Check and save</button>
+  </div>
+  <div id="state" role="status" aria-live="polite"></div>
 </div>
 <script>
 (function () {
@@ -145,7 +230,10 @@ _TEMPLATE = """<!DOCTYPE html>
   var PROTOCOL = "2026-01-26";
   var nextId = 1;
   var pending = {};
+  var ready = false;
+  var saving = false;
 
+  var root = document.documentElement;
   var envsEl = document.getElementById("envs");
   var keyEl = document.getElementById("key");
   var secretEl = document.getElementById("secret");
@@ -153,6 +241,10 @@ _TEMPLATE = """<!DOCTYPE html>
   var saveEl = document.getElementById("save");
   var createEl = document.getElementById("create");
   var stateEl = document.getElementById("state");
+  var againEl = document.getElementById("again");
+  var doneWho = document.getElementById("done-who");
+  var doneWhere = document.getElementById("done-where");
+  var doneNext = document.getElementById("done-next");
 
   CONFIG.environments.forEach(function (env, i) {
     var row = document.createElement("label");
@@ -195,6 +287,20 @@ _TEMPLATE = """<!DOCTYPE html>
     });
   }
 
+  // Each variable is applied only when it has a value, so a host sending part of a palette
+  // leaves the rest on the fallbacks rather than blanking them.
+  function applyHostContext(ctx) {
+    if (!ctx) return;
+    if (ctx.theme) root.style.colorScheme = ctx.theme;
+    var vars = ctx.styles && ctx.styles.variables;
+    if (vars) {
+      Object.keys(vars).forEach(function (name) {
+        if (vars[name]) root.style.setProperty(name, vars[name]);
+      });
+    }
+    resize();
+  }
+
   window.addEventListener("message", function (event) {
     if (event.source !== window.parent) return;
     var msg = event.data;
@@ -207,6 +313,12 @@ _TEMPLATE = """<!DOCTYPE html>
       else p.resolve(msg.result);
       return;
     }
+    // A notification carries a method and no id, so it matches neither of the branches
+    // around it. This is how a theme switch mid-conversation arrives.
+    if (msg.method !== undefined && msg.id === undefined) {
+      if (msg.method === "ui/notifications/host-context-changed") applyHostContext(msg.params);
+      return;
+    }
     // The host may call into the view; answer rather than ignore, so a host waiting on a
     // reply is not left holding a request that never settles.
     if (msg.method !== undefined && msg.id !== undefined) {
@@ -215,13 +327,29 @@ _TEMPLATE = """<!DOCTYPE html>
     }
   });
 
+  // scrollHeight never reports less than the frame it is measured in, so reporting it can
+  // only grow the frame: one long error message would leave it tall for the rest of the
+  // conversation. Forcing intrinsic sizing for the measurement reports the content itself.
   function resize() {
+    var previous = root.style.height;
+    root.style.height = "max-content";
+    var height = Math.ceil(root.getBoundingClientRect().height);
+    root.style.height = previous;
     post({ jsonrpc: "2.0", method: "ui/notifications/size-changed",
-           params: { height: document.documentElement.scrollHeight } });
+           params: { height: height } });
   }
 
+  // aria-disabled rather than disabled, because disabling a control while it holds focus
+  // drops focus to the body. It does not block clicks, so every handler checks it.
+  function enable(el, on) {
+    if (on) el.removeAttribute("aria-disabled");
+    else el.setAttribute("aria-disabled", "true");
+  }
+
+  function off(el) { return el.getAttribute("aria-disabled") === "true"; }
+
   function refreshSaveState() {
-    saveEl.disabled = !ready || !keyEl.value.trim() || !secretEl.value.trim();
+    enable(saveEl, ready && !saving && !!keyEl.value.trim() && !!secretEl.value.trim());
   }
 
   showEl.addEventListener("change", function () {
@@ -233,7 +361,15 @@ _TEMPLATE = """<!DOCTYPE html>
   keyEl.addEventListener("input", refreshSaveState);
   secretEl.addEventListener("input", refreshSaveState);
 
+  againEl.addEventListener("click", function () {
+    document.body.classList.remove("done");
+    refreshSaveState();
+    resize();
+    keyEl.focus();
+  });
+
   createEl.addEventListener("click", function () {
+    if (off(createEl)) return;
     var url = CONFIG.dashboards[chosenEnv()];
     if (!url) { say("No key page for that environment.", "err"); return; }
     request("ui/open-link", { url: url }).catch(function (err) {
@@ -242,9 +378,11 @@ _TEMPLATE = """<!DOCTYPE html>
   });
 
   saveEl.addEventListener("click", function () {
+    if (off(saveEl) || saving) return;
     var key = keyEl.value.trim();
     var secret = secretEl.value.trim();
-    saveEl.disabled = true;
+    saving = true;
+    refreshSaveState();
     say("Checking the key against Delta\\u2026");
     // Longer than the default: this call asks Delta about the key, and the client behind
     // it backs off and retries a rate limit. Timing out sooner than the work can finish
@@ -264,12 +402,23 @@ _TEMPLATE = """<!DOCTYPE html>
         secretEl.value = "";
         showEl.checked = false;
         keyEl.type = secretEl.type = "password";
-      } else {
-        saveEl.disabled = false;
       }
-      say(payload.message || status, status === "saved" ? "ok" : stored ? "" : "err");
+      saving = false;
+      refreshSaveState();
+      // Only a clean save swaps the form out. The other two stored cases still need the
+      // fields, because what they say is "saved, and here is what to fix".
+      if (status === "saved" && payload.account) {
+        doneWho.textContent = "Connected as " + payload.account;
+        doneWhere.textContent = "Saved to " + (payload.path || "this computer");
+        doneNext.textContent = payload.next_step || "";
+        document.body.classList.add("done");
+        say("");
+        return;
+      }
+      say(payload.message || status, stored ? "" : "err");
     }).catch(function (err) {
-      saveEl.disabled = false;
+      saving = false;
+      refreshSaveState();
       say("Could not tell whether it saved: " + err.message +
           ". Restart this client and ask whether your account is connected.", "err");
     });
@@ -288,20 +437,19 @@ _TEMPLATE = """<!DOCTYPE html>
     return {};
   }
 
-  var ready = false;
-  say("Connecting to this app\\u2026");
   request("ui/initialize", {
     appCapabilities: {},
     appInfo: { name: "Delta Exchange credentials", version: "1" },
     protocolVersion: PROTOCOL,
-  }).then(function () {
+  }).then(function (result) {
     post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
     ready = true;
-    createEl.disabled = false;
+    enable(createEl, true);
     refreshSaveState();
-    say("");
+    // The theme and the palette arrive here. Discarding this result is what left the view
+    // styling itself off the operating system rather than off the client it renders in.
+    applyHostContext(result && result.hostContext);
     resize();
-    keyEl.focus();
   }).catch(function (err) {
     say("This client could not open the form: " + err.message, "err");
   });
@@ -492,7 +640,11 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         # this machine reads, so the key still belongs there even when this one ignores it.
         overridden = credentials.overridden_by_client()
         if overridden:
-            return {"status": "overridden", "message": _override_message(overridden)}
+            return {
+                "status": "overridden",
+                "path": str(store.path()),
+                "message": _override_message(overridden),
+            }
 
         # Leads with carrying on rather than restarting. The tools are registered by then,
         # so the only open question is whether this client acted on being told the list
@@ -510,6 +662,7 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
             # they typed correctly, and the next real call will report the truth anyway.
             return {
                 "status": "unverified",
+                "path": str(store.path()),
                 "message": (
                     f"Saved to {store.path()}, but Delta could not be reached to check "
                     f"it. {result.detail} {next_step}"
@@ -520,8 +673,14 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         # "saved" from "saved the wrong account's key", and it is not a new disclosure:
         # any assistant with these credentials can read it from the profile endpoint.
         who = f" as {result.detail}" if result.detail else ""
+        # The same facts twice: as fields, because the view renders them as its own
+        # connected state rather than printing a paragraph, and as one sentence, because
+        # that is what a client without a view has to show.
         return {
             "status": "saved",
+            "account": result.detail,
+            "path": str(store.path()),
+            "next_step": next_step,
             "message": (
                 f"Connected{who}. Saved to {store.path()}. {next_step} Trading stays "
                 "off — that is enabled per client, not here."
@@ -536,7 +695,10 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         title="Connect your Delta Exchange account",
         description="A form for entering a Delta API key without putting it in the chat.",
         mime_type=VIEW_MIME,
-        meta={"ui": {"preferredSize": {"height": 560}}},
+        # `prefersBorder` is what decides who draws the box. Omitting it left Claude
+        # Desktop drawing one and this view drawing a second inside it. There is no
+        # `preferredSize` in the spec — the height comes from what the view reports.
+        meta={"ui": {"prefersBorder": True}},
     )
     def credentials_view() -> str:
         return VIEW_HTML

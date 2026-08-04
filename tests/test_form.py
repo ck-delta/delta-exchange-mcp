@@ -97,6 +97,49 @@ def test_the_view_does_not_feature_test_on_the_ui_capability():
     assert "io.modelcontextprotocol/ui" not in form.VIEW_HTML
 
 
+def test_the_view_measures_content_rather_than_the_frame_it_sits_in():
+    """`documentElement.scrollHeight` in an iframe never returns less than the frame.
+
+    So reporting it echoes back the current size and the frame can only ever grow: at
+    frame heights 200/560/1200/2000 it reported 535/560/1200/2000 for content that was
+    really 535. One long rejection message would leave the frame tall for the rest of the
+    conversation. Forcing intrinsic sizing for the measurement is what lets it shrink.
+    """
+    assert "documentElement.scrollHeight" not in form.VIEW_HTML
+    assert 'root.style.height = "max-content"' in form.VIEW_HTML
+    assert "getBoundingClientRect().height" in form.VIEW_HTML
+
+
+def test_the_view_reads_the_host_context_it_asked_for():
+    """The theme and the palette arrive in the `ui/initialize` result and in a notification.
+
+    A listener written only for replies and for host-initiated requests drops the
+    notification, because it has a method and no id and so matches neither.
+    """
+    assert "hostContext" in form.VIEW_HTML
+    assert "ui/notifications/host-context-changed" in form.VIEW_HTML
+
+
+async def test_the_resource_says_who_draws_the_box(server):
+    """Omitting this left Claude Desktop drawing one and the view drawing a second inside.
+
+    `preferredSize` is not a field in the spec at all; the height is what the view reports,
+    so declaring it did nothing while reading as though it set the frame.
+    """
+    resource = next(r for r in await server.list_resources() if str(r.uri) == form.VIEW_URI)
+    assert resource.meta["ui"]["prefersBorder"] is True
+    assert "preferredSize" not in json.dumps(resource.meta)
+
+
+def test_the_view_carries_delta_s_own_brand_colours():
+    """Surfaces follow the host, but the accent has to be Delta's or it is a generic form."""
+    # --brand-india-bg-primary and its hover, from delta.exchange's own token set.
+    assert "#fe6c02" in form.VIEW_HTML
+    assert "#e76202" in form.VIEW_HTML
+    # The official mark, inlined because nothing may be fetched.
+    assert 'viewBox="0 0 53 52"' in form.VIEW_HTML
+
+
 def test_the_view_carries_the_dashboards_the_rest_of_the_package_uses():
     """The key page URL is opened from here and printed by `login`; one copy, not two."""
     injected = json.loads(
@@ -169,6 +212,30 @@ async def test_a_verified_key_is_saved_with_its_environment(server, monkeypatch)
     cfg = config_mod.load()
     assert (cfg.api_key, cfg.api_secret) == (KEY, SECRET)
     assert cfg.env == "india_testnet"
+
+
+async def test_a_clean_save_reports_its_facts_as_fields_not_only_as_a_sentence(
+    server, monkeypatch
+):
+    """The view renders its own connected state, so it needs the parts, not the paragraph.
+
+    `message` stays alongside them because a client that renders no view has nothing else
+    to show, and neither may ever carry the key or the secret.
+    """
+    monkeypatch.setattr(
+        credentials, "check", checking(ok=True, reachable=True, detail="someone@delta.exchange")
+    )
+    structured, _ = await save(await opened(server))
+
+    assert structured["account"] == "someone@delta.exchange"
+    assert structured["path"] == str(store.path())
+    # This fixture registers the form with no `activate`, which is the branch that still
+    # needs a restart; `test_activation.py` covers the one that does not.
+    assert structured["next_step"] == "Restart this client to use your account."
+    assert "someone@delta.exchange" in structured["message"]
+
+    blob = json.dumps(structured)
+    assert KEY not in blob and SECRET not in blob
 
 
 async def test_saving_keeps_the_template_and_its_instructions(server, monkeypatch):

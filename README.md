@@ -231,7 +231,7 @@ this file.
 1. Create it at [delta.exchange/app/account/manageapikeys](https://www.delta.exchange/app/account/manageapikeys) (testnet: [demo.delta.exchange](https://demo.delta.exchange/app/account/manageapikeys)).
 2. Both `api_key` and `api_secret` are shown **once at creation**. Save the secret immediately; it can't be re-derived.
 3. **Read Data** permission is enough for the read tiers. Trading permission is needed only for trade mode.
-4. Recommended: whitelist your IP on the key. Delta blocks non-whitelisted IPs and surfaces your current IP in the error message if it fires.
+4. **IP whitelisting is only for trading.** Delta requires whitelisted IPs to create a key with Trading permission; a read-only key needs none. If a key does carry a whitelist, Delta blocks other IPs and names the one it saw in the error.
 5. **Match the environment**: a key from delta.exchange works only with `india_prod`, one from demo.delta.exchange only with `india_testnet`. Mixing them returns `InvalidApiKey`.
 
 The in-chat form and `login` both check all four for you and refuse to save a key Delta
