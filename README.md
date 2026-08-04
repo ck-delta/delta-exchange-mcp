@@ -360,13 +360,25 @@ Add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and 
     "delta-exchange-mcp": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["delta-exchange-mcp"]
+      "args": ["delta-exchange-mcp"],
+      "env": {
+        "DELTA_MCP_ENV": "${input:delta-env}",
+        "DELTA_API_KEY": "${input:delta-api-key}",
+        "DELTA_API_SECRET": "${input:delta-api-secret}"
+      }
     }
   }
 }
 ```
 
-Leave both prompts empty for public-data-only mode.
+The `env` block is what makes those prompts happen — VS Code only asks for an input that
+something references, so without it the three declarations above are inert and you are
+never asked for a key.
+
+Leave both prompts empty for public-data-only mode. A key entered here is passed by VS Code
+on every launch and takes precedence over the [shared file](#add-your-api-key), so the
+in-chat form cannot replace it — clear these prompts first if you want to manage the key
+there instead.
 
 </details>
 
