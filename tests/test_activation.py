@@ -17,7 +17,7 @@ from mcp.client.session import ClientSession
 from mcp.shared.memory import create_client_server_memory_streams
 
 from delta_exchange_mcp import config as config_mod
-from delta_exchange_mcp import credentials, server
+from delta_exchange_mcp import credentials, server, store
 
 KEY = "typed-into-the-form-key"
 SECRET = "typed-into-the-form-secret"
@@ -215,6 +215,97 @@ async def test_trade_mode_still_waits_for_a_restart(accepted, monkeypatch):
         status = await session.call("get_connection_status")
         assert status["mode"] == "trade"
         assert status["restart_required"] is True
+
+
+async def test_a_key_the_client_config_outranks_says_so_instead_of_reporting_success(
+    accepted, monkeypatch
+):
+    """The failure this replaces was silent, and restarting made it look broken.
+
+    config resolves the process environment before the shared file, so a client passing
+    its own key wins on every launch. The save verified a real account and would have
+    reported it by name while the server went on signing with the other one.
+    """
+    monkeypatch.setenv("DELTA_API_KEY", "from-the-client-config")
+    monkeypatch.setenv("DELTA_API_SECRET", "from-the-client-config")
+    async with connected() as session:
+        result = await save(session)
+        assert result["status"] == "overridden"
+        assert "DELTA_API_KEY" in result["message"]
+        assert "will not be used" in result["message"]
+        # The email of the account it checked must not be reported as connected.
+        assert "someone@delta.exchange" not in result["message"]
+
+        # The key still belongs in the file — every other client on the machine reads it.
+        assert store.read()["DELTA_API_KEY"] == KEY
+
+        status = await session.call("get_connection_status")
+        assert status["overridden_by_client"] == ["DELTA_API_KEY", "DELTA_API_SECRET"]
+        # Restarting cannot help: the client passes its own value again every launch.
+        assert status["restart_required"] is False
+
+
+async def test_an_environment_the_client_config_outranks_is_reported_too(accepted, monkeypatch):
+    """Picking the practice site is just as ignorable, and fails as a rejected key later."""
+    monkeypatch.setenv("DELTA_MCP_ENV", "india_prod")
+    async with connected() as session:
+        result = await save(session)
+        assert result["status"] == "overridden"
+        assert "DELTA_MCP_ENV" in result["message"]
+        # This case still uses the key, so saying it is unused would be wrong — it is sent
+        # to the site it was not created on, where Delta rejects it as unknown.
+        assert "will not be used at all" not in result["message"]
+        assert "against the other site" in result["message"]
+
+
+async def test_a_client_pinning_the_same_environment_is_not_reported(accepted, monkeypatch):
+    """The Cursor install link sets DELTA_MCP_ENV=india_prod for everyone who uses it.
+
+    Testing for presence rather than for a difference would tell every one of those users
+    that the key they just saved would not be used, which is both false and alarming.
+    """
+    monkeypatch.setenv("DELTA_MCP_ENV", "india_testnet")
+    async with connected() as session:
+        # The same environment the form is about to save.
+        result = await save(session)
+        assert result["status"] == "saved"
+        assert (await session.call("get_connection_status"))["overridden_by_client"] == []
+
+
+async def test_a_key_from_the_other_site_names_the_choice_not_the_variable(monkeypatch):
+    """The commonest first-run mistake, answered in the words on the form's own radios."""
+
+    async def not_found(env, key, secret):
+        return credentials.Check(
+            ok=False,
+            reachable=True,
+            detail="delta api error: InvalidApiKey — confirm DELTA_MCP_ENV matches",
+            code="InvalidApiKey",
+        )
+
+    monkeypatch.setattr(credentials, "check", not_found)
+    async with connected() as session:
+        message = (await save(session))["message"]
+        assert "Practice account" in message and "demo.delta.exchange" in message
+        assert "Real account" in message and "delta.exchange" in message
+
+
+async def test_a_failure_that_is_not_a_missing_key_gets_no_site_advice(monkeypatch):
+    """Telling someone to switch sites over an unwhitelisted IP sends them nowhere useful."""
+
+    async def blocked(env, key, secret):
+        return credentials.Check(
+            ok=False,
+            reachable=True,
+            detail="delta api error: ip_not_whitelisted_for_api_key (request IP: 1.2.3.4)",
+            code="ip_not_whitelisted_for_api_key",
+        )
+
+    monkeypatch.setattr(credentials, "check", blocked)
+    async with connected() as session:
+        message = (await save(session))["message"]
+        assert "1.2.3.4" in message
+        assert "choose" not in message.lower()
 
 
 async def test_a_key_delta_rejects_changes_nothing(monkeypatch):

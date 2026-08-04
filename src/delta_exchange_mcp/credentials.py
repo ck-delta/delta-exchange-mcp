@@ -13,7 +13,7 @@ import httpx
 
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
-from delta_exchange_mcp.config import BASE_URLS, Config
+from delta_exchange_mcp.config import BASE_URLS, Config, load
 from delta_exchange_mcp.errors import DeltaApiError
 
 
@@ -29,6 +29,39 @@ class Check:
     ok: bool
     reachable: bool
     detail: str
+    # Delta's own error code when it rejected the key. Kept beside the rendered message so
+    # a caller can act on which failure it was without matching on that message's text.
+    code: str = ""
+
+
+def overridden_by_client() -> list[str]:
+    """Which settings in the shared file the process environment is overriding.
+
+    `config` resolves the process environment before the file, so a client that passes its
+    own key or environment outranks whatever is saved here — on every launch, which is why
+    restarting cannot help. Saying nothing produces the worst version of this: a save
+    verifies one account against Delta, reports it by name, and the server goes on signing
+    with a different one.
+
+    Compares what `config` actually resolves against what the file holds, rather than
+    restating the precedence rules, so this cannot drift from them. Presence alone is the
+    wrong test twice over. A client pinning the environment to the value the user chose
+    overrides nothing that matters, and the Cursor install link sets DELTA_MCP_ENV for
+    everyone — so that test would tell every Cursor user their working key was ignored.
+    A file with nothing in it is not being overridden either.
+    """
+    stored = store.read()
+    live = load()
+    effective = {
+        "DELTA_MCP_ENV": live.env,
+        "DELTA_API_KEY": live.api_key,
+        "DELTA_API_SECRET": live.api_secret,
+    }
+    return [
+        name
+        for name, in_use in effective.items()
+        if (saved := (stored.get(name) or "").strip()) and saved != in_use
+    ]
 
 
 async def check(env: str, key: str, secret: str) -> Check:
@@ -43,7 +76,7 @@ async def check(env: str, key: str, secret: str) -> Check:
     try:
         profile = await client.get("/profile", auth=True)
     except DeltaApiError as exc:
-        return Check(ok=False, reachable=True, detail=str(exc))
+        return Check(ok=False, reachable=True, detail=str(exc), code=exc.code)
     except httpx.HTTPError as exc:
         return Check(ok=False, reachable=False, detail=f"could not reach Delta: {exc}")
     else:

@@ -255,7 +255,10 @@ _TEMPLATE = """<!DOCTYPE html>
     }, 120000).then(function (result) {
       var payload = readResult(result);
       var status = payload.status || "failed";
-      if (status === "saved" || status === "unverified") {
+      // These three all wrote the key and differ only in what there is to say about it.
+      // Anything else did not, so the fields stay as typed and the button comes back.
+      var stored = status === "saved" || status === "unverified" || status === "overridden";
+      if (stored) {
         // Do not leave a secret sitting in a rendered field once it is stored.
         keyEl.value = "";
         secretEl.value = "";
@@ -264,7 +267,7 @@ _TEMPLATE = """<!DOCTYPE html>
       } else {
         saveEl.disabled = false;
       }
-      say(payload.message || status, status === "saved" ? "ok" : status === "unverified" ? "" : "err");
+      say(payload.message || status, status === "saved" ? "ok" : stored ? "" : "err");
     }).catch(function (err) {
       saveEl.disabled = false;
       say("Could not tell whether it saved: " + err.message +
@@ -321,6 +324,53 @@ VIEW_HTML = _TEMPLATE.replace(
         }
     ),
 )
+
+
+# Delta's two spellings for a key it has never seen, which is what a key from the other
+# site looks like. Its rendered message names DELTA_MCP_ENV, so the form adds `_site_hint`.
+_KEY_NOT_FOUND = {"InvalidApiKey", "invalid_api_key"}
+
+
+def _site_hint(env: str) -> str:
+    """Name the choice the user can change rather than the variable behind it.
+
+    The commonest first-run mistake is a key from one site checked against the other, and
+    the message Delta's code produces tells them to confirm DELTA_MCP_ENV — which someone
+    who picked a labelled radio button a few lines above has never seen. Only added for a
+    key-not-found: appended to an IP or permission failure it would send them to the wrong
+    place entirely.
+    """
+    chosen = next((e for e in ENVIRONMENTS if e["value"] == env), None)
+    other = next((e for e in ENVIRONMENTS if e["value"] != env), None)
+    if chosen is None or other is None:
+        return ""
+    return (
+        f" You chose {chosen['label']}, so it was checked against {chosen['site']}. If you "
+        f"created this key on {other['site']}, choose {other['label']} and save again."
+    )
+
+
+def _override_message(overridden: list[str]) -> str:
+    """What to say when the client's own configuration outranks what was just saved.
+
+    The two cases fail differently and need saying differently. A client supplying its own
+    key discards this one outright. A client supplying only the environment still uses this
+    key, against the site it was not created on, where Delta rejects it as unknown.
+    """
+    if {"DELTA_API_KEY", "DELTA_API_SECRET"} & set(overridden):
+        consequence = "so this key will not be used at all"
+    else:
+        consequence = (
+            "so your key will be used against the other site, where Delta will reject it "
+            "as a key it has never seen"
+        )
+    return (
+        f"Saved to {store.path()}, but this client sets {', '.join(overridden)} in its own "
+        f"configuration, and that beats the file — {consequence}. Clear those from this "
+        "client's MCP entry, or from the fields it asked you to fill in when you installed "
+        "it, and then restart it. Restarting on its own will not help, because the client "
+        "passes its own value again every time it starts."
+    )
 
 
 def _opened_message() -> str:
@@ -413,11 +463,21 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
 
         result = await credentials.check(env, key, secret)
         if result.reachable and not result.ok:
-            return {"status": "rejected", "message": f"Delta rejected this key. {result.detail}"}
+            hint = _site_hint(env) if result.code in _KEY_NOT_FOUND else ""
+            return {
+                "status": "rejected",
+                "message": f"Delta rejected this key. {result.detail}{hint}",
+            }
 
         problem = credentials.save(env, key, secret)
         if problem is not None:
             return {"status": "failed", "message": problem}
+
+        # Checked after the write, not before it: the file is what every other client on
+        # this machine reads, so the key still belongs there even when this one ignores it.
+        overridden = credentials.overridden_by_client()
+        if overridden:
+            return {"status": "overridden", "message": _override_message(overridden)}
 
         # Leads with carrying on rather than restarting. The tools are registered by then,
         # so the only open question is whether this client acted on being told the list

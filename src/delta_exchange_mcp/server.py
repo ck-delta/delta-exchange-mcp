@@ -12,7 +12,7 @@ from mcp.server.stdio import stdio_server
 
 from delta_exchange_mcp import audit_log
 from delta_exchange_mcp import config as config_mod
-from delta_exchange_mcp import debug_log
+from delta_exchange_mcp import credentials, debug_log
 from delta_exchange_mcp import form
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
@@ -127,13 +127,19 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
         # Read the file rather than report startup state: another client on this machine
         # shares it, so a key can appear without this process having been told.
         stored = config_mod.load()
+        overridden = credentials.overridden_by_client()
         return {
             "environment": live.env,
             "credentials_configured": stored.has_credentials,
             "account_tools_available": live.has_credentials,
             "mode": live.mode,
-            "restart_required": stored.has_credentials
+            # A restart re-reads the file, so it cannot help when this client passes its
+            # own value on every launch. `overridden_by_client` is then what to act on:
+            # those names have to come out of the client's own MCP entry.
+            "restart_required": not overridden
+            and stored.has_credentials
             and (restart_pending or not live.has_credentials),
+            "overridden_by_client": overridden,
         }
 
     trade_audit = None

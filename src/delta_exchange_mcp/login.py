@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import getpass
-import os
 import sys
 
 from delta_exchange_mcp import credentials, store
@@ -89,17 +88,13 @@ def run(verify: bool = True) -> int:
 
     print(f"\nSaved to {path}. Restart your MCP client.")
 
-    shadowing = [
-        name
-        for name in ("DELTA_API_KEY", "DELTA_API_SECRET", "DELTA_MCP_ENV")
-        if (os.environ.get(name) or "").strip()
-    ]
-    if shadowing:
-        # A client launched from this shell inherits these, and a client's own value
-        # always wins over the file — so the key just saved would appear to do nothing.
+    overridden = credentials.overridden_by_client()
+    if overridden:
+        # Set in this shell, so any client launched from here inherits it — and a client's
+        # own value always wins over the file, so the key just saved would do nothing.
         print(
-            f"\nNote: {', '.join(shadowing)} is exported in this shell and takes "
-            "precedence over the file for any client launched from here.",
+            f"\nNote: {', '.join(overridden)} is set in this shell and takes precedence "
+            "over the file for any client launched from here.",
             file=sys.stderr,
         )
     return 0
