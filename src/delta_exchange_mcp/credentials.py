@@ -80,9 +80,12 @@ async def check(env: str, key: str, secret: str) -> Check:
     except httpx.HTTPError as exc:
         return Check(ok=False, reachable=False, detail=f"could not reach Delta: {exc}")
     else:
-        who = ""
-        if isinstance(profile, dict):
-            who = str(profile.get("email") or profile.get("id") or "")
+        # The client hands back Delta's envelope rather than unwrapping it, so the account
+        # lives under "result". Reading the top level instead silently yields no name at
+        # all, which is the one thing that distinguishes this from saving the wrong
+        # account's key.
+        body = profile.get("result") if isinstance(profile, dict) else None
+        who = str(body.get("email") or body.get("id") or "") if isinstance(body, dict) else ""
         return Check(ok=True, reachable=True, detail=who)
     finally:
         await client.aclose()
