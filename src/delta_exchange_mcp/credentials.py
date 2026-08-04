@@ -29,9 +29,11 @@ class Check:
     ok: bool
     reachable: bool
     detail: str
-    # Delta's own error code when it rejected the key. Kept beside the rendered message so
-    # a caller can act on which failure it was without matching on that message's text.
+    # Delta's own error code when it rejected the key, and the IP it says it saw. Kept
+    # beside the rendered message so a caller can write its own copy for the failures its
+    # users can act on, rather than matching on that message's text.
     code: str = ""
+    ip: str = ""
 
 
 def overridden_by_client() -> list[str]:
@@ -76,7 +78,9 @@ async def check(env: str, key: str, secret: str) -> Check:
     try:
         profile = await client.get("/profile", auth=True)
     except DeltaApiError as exc:
-        return Check(ok=False, reachable=True, detail=str(exc), code=exc.code)
+        return Check(
+            ok=False, reachable=True, detail=str(exc), code=exc.code, ip=exc.ip or ""
+        )
     except httpx.HTTPError as exc:
         return Check(ok=False, reachable=False, detail=f"could not reach Delta: {exc}")
     else:

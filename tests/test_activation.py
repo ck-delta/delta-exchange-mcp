@@ -272,40 +272,64 @@ async def test_a_client_pinning_the_same_environment_is_not_reported(accepted, m
         assert (await session.call("get_connection_status"))["overridden_by_client"] == []
 
 
+def rejecting(code, detail="delta api error: raw [http 401] (context={...})", ip=""):
+    async def check(env, key, secret):
+        return credentials.Check(
+            ok=False, reachable=True, detail=detail, code=code, ip=ip
+        )
+
+    return check
+
+
 async def test_a_key_from_the_other_site_names_the_choice_not_the_variable(monkeypatch):
     """The commonest first-run mistake, answered in the words on the form's own radios."""
-
-    async def not_found(env, key, secret):
-        return credentials.Check(
-            ok=False,
-            reachable=True,
-            detail="delta api error: InvalidApiKey — confirm DELTA_MCP_ENV matches",
-            code="InvalidApiKey",
-        )
-
-    monkeypatch.setattr(credentials, "check", not_found)
+    monkeypatch.setattr(credentials, "check", rejecting("invalid_api_key"))
     async with connected() as session:
         message = (await save(session))["message"]
-        assert "Practice account" in message and "demo.delta.exchange" in message
-        assert "Real account" in message and "delta.exchange" in message
+        # save() picks the practice site, so that is what it was checked against and the
+        # other choice is the one worth offering.
+        assert "demo.delta.exchange" in message
+        assert "Real account" in message
 
 
-async def test_a_failure_that_is_not_a_missing_key_gets_no_site_advice(monkeypatch):
+async def test_a_rejection_never_shows_the_form_the_message_meant_for_a_log(monkeypatch):
+    """`delta api error:`, the raw code, DELTA_MCP_ENV and `[http 401]` mean nothing here.
+
+    Appending readable copy to that string rather than replacing it left the user reading
+    the machine's version first and the same advice twice.
+    """
+    monkeypatch.setattr(credentials, "check", rejecting("invalid_api_key"))
+    async with connected() as session:
+        message = (await save(session))["message"]
+        for leak in ("delta api error", "DELTA_MCP_ENV", "http 401", "context=", "_api_key"):
+            assert leak not in message, f"{leak!r} leaked into the form"
+
+
+async def test_a_blocked_ip_says_so_and_shows_the_address_delta_saw(monkeypatch):
     """Telling someone to switch sites over an unwhitelisted IP sends them nowhere useful."""
-
-    async def blocked(env, key, secret):
-        return credentials.Check(
-            ok=False,
-            reachable=True,
-            detail="delta api error: ip_not_whitelisted_for_api_key (request IP: 1.2.3.4)",
-            code="ip_not_whitelisted_for_api_key",
-        )
-
-    monkeypatch.setattr(credentials, "check", blocked)
+    monkeypatch.setattr(
+        credentials, "check", rejecting("ip_not_whitelisted_for_api_key", ip="1.2.3.4")
+    )
     async with connected() as session:
         message = (await save(session))["message"]
         assert "1.2.3.4" in message
-        assert "choose" not in message.lower()
+        assert "whitelisted" in message
+        assert "demo.delta.exchange" not in message
+
+
+async def test_a_key_without_read_data_says_which_permission_to_add(monkeypatch):
+    monkeypatch.setattr(credentials, "check", rejecting("unauthorized_api_access"))
+    async with connected() as session:
+        assert "Read Data" in (await save(session))["message"]
+
+
+async def test_an_unanticipated_failure_keeps_the_raw_message(monkeypatch):
+    """For a code nobody wrote copy for, the raw text is the only information there is."""
+    monkeypatch.setattr(
+        credentials, "check", rejecting("SomethingNew", detail="delta api error: SomethingNew")
+    )
+    async with connected() as session:
+        assert "SomethingNew" in (await save(session))["message"]
 
 
 async def test_a_key_delta_rejects_changes_nothing(monkeypatch):

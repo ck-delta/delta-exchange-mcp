@@ -36,7 +36,8 @@ _AUTH_HINTS: dict[str, str] = {
 }
 
 
-def _extract_ip(context: Any) -> str | None:
+def extract_ip(context: Any) -> str | None:
+    """The IP Delta says it saw, which is the one thing that makes a whitelist error fixable."""
     if not isinstance(context, dict):
         return None
     for key in ("ip", "client_ip", "whitelisted_ip", "request_ip"):
@@ -52,10 +53,13 @@ class DeltaApiError(Exception):
         self.context = context
         self.status = status
         self.hint = _AUTH_HINTS.get(code)
+        # Kept as a field, not only interpolated into the message, so a caller writing its
+        # own copy can use it without parsing the sentence back apart.
+        self.ip = extract_ip(context)
 
         msg = f"delta api error: {code}"
         if self.hint:
-            extra_ip = _extract_ip(context) if code == "ip_not_whitelisted_for_api_key" else None
+            extra_ip = self.ip if code == "ip_not_whitelisted_for_api_key" else None
             msg += f" — {self.hint}"
             if extra_ip:
                 msg += f" (request IP: {extra_ip})"

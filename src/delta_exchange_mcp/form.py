@@ -326,28 +326,47 @@ VIEW_HTML = _TEMPLATE.replace(
 )
 
 
-# Delta's two spellings for a key it has never seen, which is what a key from the other
-# site looks like. Its rendered message names DELTA_MCP_ENV, so the form adds `_site_hint`.
+# Delta spells each of these two ways depending on the endpoint.
 _KEY_NOT_FOUND = {"InvalidApiKey", "invalid_api_key"}
+_NO_PERMISSION = {"UnauthorizedApiAccess", "unauthorized_api_access"}
+_IP_BLOCKED = {"ip_not_whitelisted_for_api_key"}
 
 
-def _site_hint(env: str) -> str:
-    """Name the choice the user can change rather than the variable behind it.
+def _rejection(env: str, result: credentials.Check) -> str:
+    """What the form says when Delta turns the key down.
 
-    The commonest first-run mistake is a key from one site checked against the other, and
-    the message Delta's code produces tells them to confirm DELTA_MCP_ENV — which someone
-    who picked a labelled radio button a few lines above has never seen. Only added for a
-    key-not-found: appended to an IP or permission failure it would send them to the wrong
-    place entirely.
+    Deliberately replaces the message from `errors.py` rather than adding to it. That one
+    is written for a log — it opens with `delta api error:`, quotes the raw code, names
+    DELTA_MCP_ENV and ends in `[http 401]` — and none of that is actionable for someone
+    looking at two text fields and a pair of radio buttons. Each case here names the thing
+    on screen they can change instead.
+
+    Anything without copy of its own keeps the raw message, because for a failure nobody
+    anticipated it is the only information there is.
     """
     chosen = next((e for e in ENVIRONMENTS if e["value"] == env), None)
     other = next((e for e in ENVIRONMENTS if e["value"] != env), None)
-    if chosen is None or other is None:
-        return ""
-    return (
-        f" You chose {chosen['label']}, so it was checked against {chosen['site']}. If you "
-        f"created this key on {other['site']}, choose {other['label']} and save again."
-    )
+
+    if result.code in _KEY_NOT_FOUND and chosen and other:
+        return (
+            f"Delta does not recognise this key on {chosen['site']}. A key only works on "
+            f"the site it was created on — if you made this one on {other['site']}, pick "
+            f"{other['label']} above. Otherwise check that both the key and the secret "
+            "were pasted in full."
+        )
+    if result.code in _NO_PERMISSION:
+        return (
+            "This key cannot read your account. Give it the Read Data permission under "
+            "Account → API Keys on Delta, then save again."
+        )
+    if result.code in _IP_BLOCKED:
+        seen = f" It saw {result.ip}." if result.ip else ""
+        return (
+            "Delta blocked this request because the key only accepts whitelisted IP "
+            f"addresses and this computer is not on its list.{seen} Add it to the key "
+            "under Account → API Keys, then save again."
+        )
+    return f"Delta rejected this key. {result.detail}"
 
 
 def _override_message(overridden: list[str]) -> str:
@@ -463,11 +482,7 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
 
         result = await credentials.check(env, key, secret)
         if result.reachable and not result.ok:
-            hint = _site_hint(env) if result.code in _KEY_NOT_FOUND else ""
-            return {
-                "status": "rejected",
-                "message": f"Delta rejected this key. {result.detail}{hint}",
-            }
+            return {"status": "rejected", "message": _rejection(env, result)}
 
         problem = credentials.save(env, key, secret)
         if problem is not None:
