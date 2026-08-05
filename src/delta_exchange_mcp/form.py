@@ -43,6 +43,18 @@ always Delta's own, taken from the `--brand-india-*`, `--positive-*` and `--nega
 families on delta.exchange, because those are what make it recognisably Delta rather than
 a generic form. The one brand asset that could not come across is the Aileron typeface —
 it is a web font, and fetching it would hit the same policy that blanks the frame.
+
+Everything the host can decide, the host decides. The view sets no pixel size, no width and
+no spacing scale: type comes from the `--font-text-*` and `--font-heading-*` tokens, one
+`--gap` in em follows whatever that type turns out to be, and the fields, radios, checkbox
+and select are left as the platform draws them. That last part is why `color-scheme` matters
+beyond the `light-dark()` it enables — it is what makes a native field render dark inside a
+dark client, for free. A hand-styled field with its own padding, border and background was
+what looked wrong in Codex: the numbers were tuned against an assumed 14px base and the host
+does not run one. Fonts are the same story from the other side: the host may send
+`@font-face` rules in `hostContext.styles.css.fonts`, and the spec makes installing them the
+app's job, so a view that ignores them names a family in `--font-sans` that its own frame
+never loaded.
 """
 
 from __future__ import annotations
@@ -102,96 +114,98 @@ _TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Connect your Delta Exchange account</title>
+<style id="host-fonts"></style>
 <style>
+  /* Nothing below sets a pixel size, a width or a spacing step of its own. Type comes from
+     the host's typography tokens, spacing is one em-relative step that tracks that type,
+     and the native form controls are left as the platform draws them. What is left is
+     Delta's brand colour and the two pieces of layout that are genuinely structural: the
+     logo beside the title, and the checkbox opposite the link. */
   :root {
     color-scheme: light dark;
     /* Delta's own, always. These are the colours that make it Delta rather than a form. */
     --brand: #fe6c02;
     --brand-hover: #e76202;
     --on-brand: #ffffff;
-    --positive: light-dark(#00a876, #33b991);
-    --negative: light-dark(#dc4e4e, #ff5c5c);
-    /* The host's, when it sends them. Delta's neutrals are the fallback, so the form is
-       never left styling itself off nothing. */
-    --ink: var(--color-text-primary, light-dark(#121214, #e1e1e2));
-    --muted: var(--color-text-secondary, #8e9298);
-    --faint: var(--color-text-tertiary, light-dark(#adb1b7, #71747a));
-    --line: var(--color-border-primary,
-            light-dark(rgba(24, 25, 30, .12), rgba(255, 255, 255, .1)));
-    --field: var(--color-background-secondary, light-dark(#f3f4f6, #2d303a));
+    /* The host's tokens, falling back to the platform's own system colours rather than to
+       literals, so a host that sends no palette still lands on the right side of light or
+       dark by way of the color-scheme above. */
+    --ink: var(--color-text-primary, canvastext);
+    --muted: var(--color-text-secondary, color-mix(in srgb, canvastext 66%, canvas));
+    --faint: var(--color-text-tertiary, color-mix(in srgb, canvastext 48%, canvas));
+    --positive: var(--color-text-success, #00a876);
+    --negative: var(--color-text-danger, #dc4e4e);
     --sans: var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif);
     --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-    --r: var(--border-radius-md, 8px);
-    --r-sm: var(--border-radius-sm, 6px);
+    --small: var(--font-text-sm-size, .875em);
+    --radius: var(--border-radius-md, 6px);
+    /* One spacing step for the whole view, in em, so it follows the host's type size
+       instead of being tuned against an assumed one. */
+    --gap: 1em;
   }
 
   /* An opaque background on either of these paints over the chat behind the frame. */
   html, body { margin: 0; background: transparent; }
-  body { font: 14px/1.5 var(--sans); color: var(--ink); }
-  /* The host is asked to draw the box, so this only keeps content off the frame edge on a
-     host that draws none. */
-  .card { padding: 4px 2px 2px; max-width: 520px; }
+  body { font-family: var(--sans); font-size: var(--font-text-md-size, 1rem);
+         line-height: var(--font-text-md-line-height, 1.5); color: var(--ink); }
+  p { margin: 0 0 var(--gap); }
 
-  .head { display: flex; align-items: center; gap: 9px; margin-bottom: 3px; }
-  .mark { width: 20px; height: 20px; flex: none; }
-  h1 { font: 600 15px/1.35 var(--sans); margin: 0; }
-  .sub { margin: 0 0 16px; color: var(--muted); }
-
-  fieldset { border: 0; padding: 0; margin: 0 0 16px; }
-  legend, .lab { color: var(--muted); font-size: 13px; padding: 0; }
-  legend { margin-bottom: 6px; }
-
-  /* Native radios and checkbox, tinted to the brand. Restyling them by hand would cost
-     their keyboard behaviour and their theme-correct chrome for nothing. */
-  input[type=radio], input[type=checkbox] { accent-color: var(--brand); }
-  .choice { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; cursor: pointer; }
-  .choice .site { color: var(--faint); font-size: 13px; }
-
-  .lab { display: block; margin-bottom: 4px; }
-  /* A native select on purpose: its menu is drawn by the browser outside the frame, so
-     it cannot be clipped by the app's own bounds the way a hand-built one would be. */
-  select { font: 13px/1.5 var(--sans); width: 100%; box-sizing: border-box; padding: 8px 10px;
-      margin: 0 0 6px; color: var(--ink); background: var(--field);
-      border: 1px solid var(--line); border-radius: var(--r-sm); }
-  .note { margin: 0 0 14px; font-size: 12px; color: var(--faint); }
+  .head { display: flex; align-items: center; gap: .5em; }
+  .mark { width: 1.35em; height: 1.35em; flex: none; }
+  h1 { font-size: var(--font-heading-xs-size, 1em); margin: 0;
+       font-weight: var(--font-weight-semibold, 600);
+       line-height: var(--font-heading-xs-line-height, inherit); }
+  .sub, .note, legend, .lab, .reveal, #state, #done p { font-size: var(--small);
+      color: var(--muted); }
   .note:empty { display: none; }
-  input[type=text], input[type=password] {
-      font: 13px/1.5 var(--mono); letter-spacing: .2px; width: 100%; box-sizing: border-box;
-      padding: 8px 10px; margin: 0 0 12px; color: var(--ink); background: var(--field);
-      border: 1px solid var(--line); border-radius: var(--r-sm); }
-  input::placeholder { font-family: var(--sans); letter-spacing: 0; color: var(--faint); }
 
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-         margin-bottom: 16px; flex-wrap: wrap; }
-  .reveal { display: flex; align-items: center; gap: 7px; color: var(--muted);
-            font-size: 13px; cursor: pointer; }
+  fieldset { border: 0; padding: 0; margin: 0 0 var(--gap); }
+  legend { padding: 0; }
+  .lab { display: block; }
+  .choice { display: block; cursor: pointer; }
+  .choice .site { color: var(--faint); }
 
-  button { font: 500 14px/1 var(--sans); padding: 9px 16px; border: 0; cursor: pointer;
-           border-radius: var(--r-sm); background: var(--brand); color: var(--on-brand); }
+  /* Native controls, drawn by the platform. `font` is the one thing they do not inherit,
+     and the color-scheme above is what makes their chrome match the client's theme —
+     restyling them by hand is what previously fought the host's own metrics. A native
+     select also draws its menu outside the frame, so it cannot be clipped by the app's
+     bounds the way a hand-built one would be. */
+  input, select, button { font: inherit; }
+  input[type=text], input[type=password] { font-family: var(--mono); }
+  input[type=text], input[type=password], select {
+      width: 100%; box-sizing: border-box; margin: 0 0 var(--gap); }
+  input[type=radio], input[type=checkbox] { accent-color: var(--brand); }
+  input::placeholder { font-family: var(--sans); color: var(--faint); }
+
+  .row { display: flex; align-items: center; justify-content: space-between;
+         gap: var(--gap); flex-wrap: wrap; margin-bottom: var(--gap); }
+  .reveal { display: flex; align-items: center; gap: .4em; cursor: pointer; }
+
+  button { background: var(--brand); color: var(--on-brand); border: 0; cursor: pointer;
+           font-weight: var(--font-weight-medium, 500); padding: .5em 1.1em;
+           border-radius: var(--radius); }
   button:hover { background: var(--brand-hover); }
   button[aria-disabled=true], button[aria-disabled=true]:hover {
       background: color-mix(in srgb, var(--ink) 14%, transparent);
       color: var(--faint); cursor: not-allowed; }
   button.link, button.link:hover { background: none; color: var(--muted); padding: 0;
-      font-size: 13px; font-weight: 400; text-decoration: underline;
+      font-size: var(--small); font-weight: inherit; text-decoration: underline;
       text-underline-offset: 2px; }
   button.link[aria-disabled=true] { background: none; color: var(--faint); }
 
-  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 3px; }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
-  #state:not(:empty) { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  #state:not(:empty) { margin-top: var(--gap); }
   #state.err { color: var(--negative); }
 
   #done { display: none; }
   body.done #entry { display: none; }
   body.done #done { display: block; }
-  #done .who { font: 600 14px/1.4 var(--sans); color: var(--positive); margin: 0 0 5px; }
-  #done p { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
-  #done .next { margin-bottom: 12px; }
+  #done .who { color: var(--positive); font-weight: var(--font-weight-semibold, 600);
+               font-size: inherit; }
 </style>
 </head>
 <body>
-<div class="card">
   <div class="head">
     <!-- Delta's own mark, inlined. The one gradient in the original is flattened to its
          midpoint: it is imperceptible at 20px, and painting it needs a fragment reference
@@ -244,7 +258,6 @@ _TEMPLATE = """<!DOCTYPE html>
     <button id="save" type="button" aria-disabled="true">Check and save</button>
   </div>
   <div id="state" role="status" aria-live="polite"></div>
-</div>
 <script>
 (function () {
   var CONFIG = __CONFIG__;
@@ -255,6 +268,7 @@ _TEMPLATE = """<!DOCTYPE html>
   var saving = false;
 
   var root = document.documentElement;
+  var hostFonts = document.getElementById("host-fonts");
   var envsEl = document.getElementById("envs");
   var keyEl = document.getElementById("key");
   var secretEl = document.getElementById("secret");
@@ -315,12 +329,18 @@ _TEMPLATE = """<!DOCTYPE html>
   function applyHostContext(ctx) {
     if (!ctx) return;
     if (ctx.theme) root.style.colorScheme = ctx.theme;
-    var vars = ctx.styles && ctx.styles.variables;
+    var styles = ctx.styles || {};
+    var vars = styles.variables;
     if (vars) {
       Object.keys(vars).forEach(function (name) {
         if (vars[name]) root.style.setProperty(name, vars[name]);
       });
     }
+    // The host ships the rules that load its own typeface, and the spec makes installing
+    // them the app's job. Skipping this leaves --font-sans naming a family the frame never
+    // loaded, so every measurement below is taken against a substituted face instead.
+    var fonts = styles.css && styles.css.fonts;
+    if (fonts) hostFonts.textContent = fonts;
     resize();
   }
 

@@ -131,6 +131,30 @@ async def test_the_resource_says_who_draws_the_box(server):
     assert "preferredSize" not in json.dumps(resource.meta)
 
 
+def test_the_view_installs_the_font_rules_the_host_hands_it():
+    """`hostContext.styles.css.fonts` carries the host's own `@font-face` rules.
+
+    The spec makes installing them the app's job. A view that reads the palette but drops
+    these ends up with `--font-sans` naming a family its frame never loaded, so it silently
+    renders in a substituted face — and every measurement it reports is taken against that.
+    """
+    assert "styles.css && styles.css.fonts" in form.VIEW_HTML
+    assert "hostFonts.textContent = fonts" in form.VIEW_HTML
+
+
+def test_the_view_names_no_type_size_of_its_own():
+    """Sizes tuned against an assumed base are what made the form look wrong in Codex.
+
+    Every size comes from the host's typography tokens, so spacing expressed in em follows
+    whatever the client actually runs. A px literal in a font declaration is that assumption
+    coming back.
+    """
+    style = re.search(r"<style>(.*?)</style>", form.VIEW_HTML, re.S).group(1)
+    sized = re.findall(r"font(?:-size)?\s*:[^;}]*", style)
+    offenders = [d.strip() for d in sized if "px" in d]
+    assert offenders == [], f"these name a size instead of asking for one: {offenders}"
+
+
 def test_the_view_carries_delta_s_own_brand_colours():
     """Surfaces follow the host, but the accent has to be Delta's or it is a generic form."""
     # --brand-india-bg-primary and its hover, from delta.exchange's own token set.
