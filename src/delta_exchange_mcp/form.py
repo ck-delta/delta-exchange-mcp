@@ -41,7 +41,10 @@ What `prefersBorder` does *not* settle is padding, and there is no field that do
 in Codex: it draws the border and insets the frame by nothing, so a view that draws no
 padding of its own has its text against the line, nearer to it than the host's own tool
 label. Claude Desktop does inset. The view therefore pads itself, which costs a little extra
-room inside on the host that already pads and is the cheaper of the two failures.
+room inside on the host that already pads and is the cheaper of the two failures. That
+padding lives on a wrapper rather than on `body`: on `body` it did not visibly take effect
+in Codex, and `body` is the element every injected reset names, so a wrapper class is immune
+to a host stylesheet that cannot be inspected from here.
 
 Colour is split on purpose. Surfaces, text and borders prefer the host's tokens, so the
 form sits inside whatever theme the client is running. Brand and semantic colours are
@@ -180,7 +183,7 @@ _TEMPLATE = """<!DOCTYPE html>
      label. No field reports whether a host insets, so the view pads itself.
      On a wrapper rather than on `body`, deliberately: a host that injects a reset into the
      frame will target the elements it can name, and `body` is the one every reset names. */
-  .pad { padding: var(--gap-tight) var(--gap); }
+  .pad { padding: var(--gap); }
   p { margin: 0 0 var(--gap); }
 
   .head { display: flex; align-items: center; gap: .5em; margin-bottom: var(--gap-tight); }
