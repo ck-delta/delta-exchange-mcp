@@ -287,7 +287,9 @@ so use the **Download for Claude Desktop** bundle at the top of this page instea
 Install the Delta Exchange MCP server into my MCP client: uvx delta-exchange-mcp, local
 stdio, entry name delta-exchange-mcp, no env block. Leave my other servers alone, and
 never ask me for my API key. Verify with `uvx delta-exchange-mcp --version` — never run
-it bare, it serves stdio and won't exit. Tell me what to restart.
+it bare, it serves stdio and won't exit. Then tell me to restart the app and stop there —
+don't authenticate me first, don't send me to a terminal, and don't start a new chat. We
+carry on in this one after the restart.
 
 If you can't edit files on this machine, say so and read the README below for the
 simplest path for my client — don't improvise a config for me to paste.
@@ -300,6 +302,12 @@ The entry it writes holds no credentials and needs none — the server comes up 
 data and works the moment you restart. Your key goes in
 [the shared file](#add-your-api-key) instead, which is why the agent never has to touch it.
 To set it up by hand, follow the steps for your client below.
+
+Restart the app, then carry on in the same conversation: ask it to connect your Delta
+account and the form opens there. The restart is needed because a client builds its list
+of tools when it starts, so a server added after that isn't connected yet — which is also
+why an assistant asked to authenticate you before restarting will reach for a terminal
+instead. It has nothing else to offer at that point.
 
 ### Cursor
 
