@@ -190,11 +190,16 @@ It is created owner-only (`0600`).
 Three ways to fill it in. Pick one — they all write the same file.
 
 **In the conversation**, without leaving it. Ask your assistant to *connect my Delta
-account* and a small form appears inline, with a field for the key and one for the secret:
+account* and a small form appears inline:
 
 ```txt
 Connect my Delta Exchange account
 ```
+
+It asks four things: which site the key was made on (delta.exchange or the practice site at
+demo.delta.exchange), what the assistant should be allowed to do (read only, or read and
+trade), then the key and the secret. It checks the key against Delta before saving, and once
+it saves it replaces itself with the account it connected, so you can see which one you got.
 
 What you type in that form goes straight to the file. It is not part of the conversation
 and the assistant cannot read it, because the form runs in its own frame rather than in
@@ -559,6 +564,21 @@ shows nothing you see only the instructions.
 Use [one of the other two ways](#add-your-api-key): `uvx delta-exchange-mcp login`, or open
 `~/.delta-exchange-mcp/config.env` and fill in the three lines. Both write the same file
 the form would have.
+
+### The form saved my key, but the assistant still can't see my account
+
+The form says it saved, and names a setting your client sets in its own configuration.
+
+That is the whole failure, stated plainly: a value in your client's MCP entry — or in the
+fields it asked you to fill in when you installed it — is read before the shared file and
+wins over it. So the form verified your key, saved it correctly, and the server carries on
+signing with whatever your client passes instead. Restarting does not help, because the
+client passes its own value again every time it starts.
+
+Clear those fields from that client's entry, then restart it. Which setting is at fault is
+named in the message the form shows. `uvx delta-exchange-mcp login` runs the same check and
+warns on stderr, though there it reports what your *shell* is setting, since that is the
+environment it can see.
 
 ### `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`
 

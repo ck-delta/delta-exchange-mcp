@@ -44,17 +44,28 @@ families on delta.exchange, because those are what make it recognisably Delta ra
 a generic form. The one brand asset that could not come across is the Aileron typeface —
 it is a web font, and fetching it would hit the same policy that blanks the frame.
 
-Everything the host can decide, the host decides. The view sets no pixel size, no width and
-no spacing scale: type comes from the `--font-text-*` and `--font-heading-*` tokens, one
-`--gap` in em follows whatever that type turns out to be, and the fields, radios, checkbox
-and select are left as the platform draws them. That last part is why `color-scheme` matters
-beyond the `light-dark()` it enables — it is what makes a native field render dark inside a
-dark client, for free. A hand-styled field with its own padding, border and background was
-what looked wrong in Codex: the numbers were tuned against an assumed 14px base and the host
-does not run one. Fonts are the same story from the other side: the host may send
-`@font-face` rules in `hostContext.styles.css.fonts`, and the spec makes installing them the
-app's job, so a view that ignores them names a family in `--font-sans` that its own frame
-never loaded.
+Every dimension the host can decide, the host decides. The view names no type size and no
+width of its own: type comes from the `--font-text-*`, `--font-heading-*` and
+`--font-weight-*` tokens, and the two spacing steps are in em, so both follow whatever type
+the client turns out to run. `--gap` separates one question from the next; `--gap-tight`
+binds a label to the control it names. An earlier version hardcoded 14px and 13px type over
+a 3/4/6/9/12/14/16px spacing ladder tuned against that base, which is what looked wrong in
+Codex — Codex does not run a 14px base, and every one of those numbers was wrong there in a
+way that compounded down the form.
+
+The controls stay native, for their keyboard behaviour and for a select whose menu is drawn
+outside the frame where the app's bounds cannot clip it. They are not left bare, though:
+padding in em, plus colour, border and radius taken from the host's own field tokens, so a
+client's field styling carries in. What makes that safe in either theme is `color-scheme`,
+which the view sets from the reported theme — the fallbacks are `color-mix()` against the
+`canvas` and `canvastext` system colours, so they flip with it rather than needing a literal
+per scheme. `light-dark()` is used for exactly one pair, the success and danger tones, which
+genuinely differ between light and dark.
+
+Fonts are the same story from the other side: the host may send `@font-face` rules in
+`hostContext.styles.css.fonts`, and the spec makes installing them the app's job, so a view
+that ignores them names a family in `--font-sans` that its own frame never loaded, renders
+in a substituted face, and measures its own height against that face.
 """
 
 from __future__ import annotations
@@ -116,11 +127,11 @@ _TEMPLATE = """<!DOCTYPE html>
 <title>Connect your Delta Exchange account</title>
 <style id="host-fonts"></style>
 <style>
-  /* Nothing below sets a pixel size, a width or a spacing step of its own. Type comes from
-     the host's typography tokens, spacing is one em-relative step that tracks that type,
-     and the native form controls are left as the platform draws them. What is left is
-     Delta's brand colour and the two pieces of layout that are genuinely structural: the
-     logo beside the title, and the checkbox opposite the link. */
+  /* Nothing below names a type size or a width. Type comes from the host's typography
+     tokens and both spacing steps are in em, so they track it. The controls stay native and
+     take their colour, border and radius from the host's own field tokens. What is Delta's
+     rather than the host's: the brand fill on the primary button, the accent on the radios
+     and checkbox, the success and danger tones, and the focus ring. */
   :root {
     color-scheme: light dark;
     /* Delta's own, always. These are the colours that make it Delta rather than a form. */
