@@ -37,6 +37,12 @@ deliberate. And `prefersBorder` is the field that decides who draws the box — 
 left Claude Desktop drawing one and this view drawing a second inside it. There is no
 `preferredSize` field; the height is whatever the view reports.
 
+What `prefersBorder` does *not* settle is padding, and there is no field that does. Observed
+in Codex: it draws the border and insets the frame by nothing, so a view that draws no
+padding of its own has its text against the line, nearer to it than the host's own tool
+label. Claude Desktop does inset. The view therefore pads itself, which costs a little extra
+room inside on the host that already pads and is the cheaper of the two failures.
+
 Colour is split on purpose. Surfaces, text and borders prefer the host's tokens, so the
 form sits inside whatever theme the client is running. Brand and semantic colours are
 always Delta's own, taken from the `--brand-india-*`, `--positive-*` and `--negative-*`
@@ -166,8 +172,14 @@ _TEMPLATE = """<!DOCTYPE html>
 
   /* An opaque background on either of these paints over the chat behind the frame. */
   html, body { margin: 0; background: transparent; }
+  /* `prefersBorder` gets a border drawn, and nothing more: Codex draws one and insets the
+     frame by nothing, so with no padding here the text sits against the line — closer to it
+     than the host's own tool label. There is no field that reports whether a host insets the
+     frame, so the view pads itself. Claude Desktop, which does inset, ends up with a little
+     more room inside than it chose; that is the cheaper of the two failures. */
   body { font-family: var(--sans); font-size: var(--font-text-md-size, 1rem);
-         line-height: var(--font-text-md-line-height, 1.5); color: var(--ink); }
+         line-height: var(--font-text-md-line-height, 1.5); color: var(--ink);
+         padding: var(--gap-tight) var(--gap); }
   p { margin: 0 0 var(--gap); }
 
   .head { display: flex; align-items: center; gap: .5em; margin-bottom: var(--gap-tight); }
