@@ -76,6 +76,7 @@ in a substituted face, and measures its own height against that face.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 
@@ -172,14 +173,14 @@ _TEMPLATE = """<!DOCTYPE html>
 
   /* An opaque background on either of these paints over the chat behind the frame. */
   html, body { margin: 0; background: transparent; }
-  /* `prefersBorder` gets a border drawn, and nothing more: Codex draws one and insets the
-     frame by nothing, so with no padding here the text sits against the line — closer to it
-     than the host's own tool label. There is no field that reports whether a host insets the
-     frame, so the view pads itself. Claude Desktop, which does inset, ends up with a little
-     more room inside than it chose; that is the cheaper of the two failures. */
   body { font-family: var(--sans); font-size: var(--font-text-md-size, 1rem);
-         line-height: var(--font-text-md-line-height, 1.5); color: var(--ink);
-         padding: var(--gap-tight) var(--gap); }
+         line-height: var(--font-text-md-line-height, 1.5); color: var(--ink); }
+  /* `prefersBorder` gets a border drawn, and nothing more: a host may inset the frame by
+     nothing, leaving the text against the line — closer to it than the host's own tool
+     label. No field reports whether a host insets, so the view pads itself.
+     On a wrapper rather than on `body`, deliberately: a host that injects a reset into the
+     frame will target the elements it can name, and `body` is the one every reset names. */
+  .pad { padding: var(--gap-tight) var(--gap); }
   p { margin: 0 0 var(--gap); }
 
   .head { display: flex; align-items: center; gap: .5em; margin-bottom: var(--gap-tight); }
@@ -260,6 +261,7 @@ _TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+<div class="pad">
   <div class="head">
     <!-- Delta's own mark, inlined. The one gradient in the original is flattened to its
          midpoint: it is imperceptible at 20px, and painting it needs a fragment reference
@@ -318,6 +320,7 @@ _TEMPLATE = """<!DOCTYPE html>
     <button id="save" type="button" aria-disabled="true">Check and save</button>
   </div>
   <div id="state" role="status" aria-live="polite"></div>
+</div>
 <script>
 (function () {
   var CONFIG = __CONFIG__;
@@ -601,6 +604,19 @@ VIEW_HTML = _TEMPLATE.replace(
         }
     ),
 )
+
+
+def build_id() -> str:
+    """A short fingerprint of the view this process would serve.
+
+    The package version cannot answer "am I looking at the current form?" — every commit on
+    a branch reports the same one, and a client that reused a cached build looks identical
+    to one that fetched. Two rounds of this were spent reading a package cache to work out
+    which revision a screenshot came from. Hashing the served bytes answers it directly, and
+    answers it about the artifact in question rather than about git metadata that a source
+    install does not carry anyway.
+    """
+    return hashlib.sha256(VIEW_HTML.encode()).hexdigest()[:10]
 
 
 # Delta spells each of these two ways depending on the endpoint.

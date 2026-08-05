@@ -165,6 +165,13 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
             and stored.has_credentials
             and (restart_pending or trade_pending or not live.has_credentials),
             "overridden_by_client": overridden,
+            "version": PACKAGE_VERSION,
+            # Which build is actually running. The version is the same on every commit of a
+            # branch, so it cannot tell a client that fetched from one that reused a cached
+            # build — and that question has cost several round trips of reading package
+            # caches to answer. This fingerprints the view's own bytes, so it changes
+            # whenever the form does.
+            "view_build": form.build_id(),
         }
 
     trade_audit = None
