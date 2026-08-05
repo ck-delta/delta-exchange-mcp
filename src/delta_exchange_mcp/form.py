@@ -133,15 +133,24 @@ _TEMPLATE = """<!DOCTYPE html>
     --ink: var(--color-text-primary, canvastext);
     --muted: var(--color-text-secondary, color-mix(in srgb, canvastext 66%, canvas));
     --faint: var(--color-text-tertiary, color-mix(in srgb, canvastext 48%, canvas));
-    --positive: var(--color-text-success, #00a876);
-    --negative: var(--color-text-danger, #dc4e4e);
+    /* The one pair that needs a value per scheme rather than a mix of the system colours:
+       Delta's own success and danger tones, lightened for dark exactly as delta.exchange
+       lightens them. A host that sends these tokens overrides both. */
+    --positive: var(--color-text-success, light-dark(#00a876, #33b991));
+    --negative: var(--color-text-danger, light-dark(#dc4e4e, #ff5c5c));
+    --line: var(--color-border-primary, color-mix(in srgb, canvastext 22%, canvas));
+    --field: var(--color-background-secondary, color-mix(in srgb, canvastext 5%, canvas));
     --sans: var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif);
     --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
     --small: var(--font-text-sm-size, .875em);
     --radius: var(--border-radius-md, 6px);
-    /* One spacing step for the whole view, in em, so it follows the host's type size
-       instead of being tuned against an assumed one. */
+    --stroke: var(--border-width-regular, 1px);
+    /* Two steps, both in em so they track the host's type rather than an assumed base.
+       The tight one binds a label to the control it names and a control to the note about
+       it; the loose one separates one question from the next. Having only the loose step
+       is what made the form read as a flat list with nothing grouped. */
     --gap: 1em;
+    --gap-tight: .35em;
   }
 
   /* An opaque background on either of these paints over the chat behind the frame. */
@@ -150,30 +159,44 @@ _TEMPLATE = """<!DOCTYPE html>
          line-height: var(--font-text-md-line-height, 1.5); color: var(--ink); }
   p { margin: 0 0 var(--gap); }
 
-  .head { display: flex; align-items: center; gap: .5em; }
+  .head { display: flex; align-items: center; gap: .5em; margin-bottom: var(--gap-tight); }
   .mark { width: 1.35em; height: 1.35em; flex: none; }
   h1 { font-size: var(--font-heading-xs-size, 1em); margin: 0;
        font-weight: var(--font-weight-semibold, 600);
        line-height: var(--font-heading-xs-line-height, inherit); }
   .sub, .note, legend, .lab, .reveal, #state, #done p { font-size: var(--small);
       color: var(--muted); }
+
+  /* One wrapper per question, carrying the gap to the next. Spacing on the controls
+     themselves cannot express this: a note that is empty most of the time would either
+     leave a hole under the select or double the gap when it does have something to say. */
+  .field { margin-bottom: var(--gap); }
+  .lab { display: block; margin-bottom: var(--gap-tight); }
+  .note { margin: var(--gap-tight) 0 0; }
   .note:empty { display: none; }
 
   fieldset { border: 0; padding: 0; margin: 0 0 var(--gap); }
-  legend { padding: 0; }
-  .lab { display: block; }
+  legend { padding: 0; margin-bottom: var(--gap-tight); }
+  /* Block, so the whole row is a click target rather than just the words. */
   .choice { display: block; cursor: pointer; }
+  .choice + .choice { margin-top: var(--gap-tight); }
+  .choice input { margin: 0 .45em 0 0; }
   .choice .site { color: var(--faint); }
 
-  /* Native controls, drawn by the platform. `font` is the one thing they do not inherit,
-     and the color-scheme above is what makes their chrome match the client's theme —
-     restyling them by hand is what previously fought the host's own metrics. A native
-     select also draws its menu outside the frame, so it cannot be clipped by the app's
-     bounds the way a hand-built one would be. */
-  input, select, button { font: inherit; }
+  /* Native controls throughout: their keyboard behaviour, their theme-correct chrome, and
+     a select whose menu is drawn outside the frame and so cannot be clipped by the app's
+     bounds. What is set here is only what makes them belong to this form — the host's own
+     field colour, border and radius, and padding in em. The earlier version set the same
+     properties in px against an assumed 14px base, which is what looked wrong in Codex. */
+  /* The leading is set after `font`, which would otherwise carry the body's prose value in
+     with it: 1.5 is right for a wrapping paragraph and leaves a single-line field standing
+     a third taller than the text it holds. */
+  input, select, button { font: inherit; line-height: 1.35; }
   input[type=text], input[type=password] { font-family: var(--mono); }
   input[type=text], input[type=password], select {
-      width: 100%; box-sizing: border-box; margin: 0 0 var(--gap); }
+      width: 100%; box-sizing: border-box; margin: 0; padding: .45em .6em;
+      color: var(--ink); background: var(--field);
+      border: var(--stroke) solid var(--line); border-radius: var(--radius); }
   input[type=radio], input[type=checkbox] { accent-color: var(--brand); }
   input::placeholder { font-family: var(--sans); color: var(--faint); }
 
@@ -182,7 +205,7 @@ _TEMPLATE = """<!DOCTYPE html>
   .reveal { display: flex; align-items: center; gap: .4em; cursor: pointer; }
 
   button { background: var(--brand); color: var(--on-brand); border: 0; cursor: pointer;
-           font-weight: var(--font-weight-medium, 500); padding: .5em 1.1em;
+           font-weight: var(--font-weight-medium, 500); padding: .55em 1.15em;
            border-radius: var(--radius); }
   button:hover { background: var(--brand-hover); }
   button[aria-disabled=true], button[aria-disabled=true]:hover {
@@ -193,7 +216,11 @@ _TEMPLATE = """<!DOCTYPE html>
       text-underline-offset: 2px; }
   button.link[aria-disabled=true] { background: none; color: var(--faint); }
 
+  /* A field already has a border of its own, so the ring hugs it instead of floating
+     outside; everything else keeps the offset that stops it touching the glyphs. */
   :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  input[type=text]:focus-visible, input[type=password]:focus-visible,
+  select:focus-visible { outline-offset: 0; }
 
   #state:not(:empty) { margin-top: var(--gap); }
   #state.err { color: var(--negative); }
@@ -201,6 +228,10 @@ _TEMPLATE = """<!DOCTYPE html>
   #done { display: none; }
   body.done #entry { display: none; }
   body.done #done { display: block; }
+  /* One block of facts about the same save, so the lines sit together and only the last
+     one separates from the button that follows. */
+  #done p { margin-bottom: var(--gap-tight); }
+  #done .next { margin-bottom: var(--gap); }
   #done .who { color: var(--positive); font-weight: var(--font-weight-semibold, 600);
                font-size: inherit; }
 </style>
@@ -234,20 +265,26 @@ _TEMPLATE = """<!DOCTYPE html>
       <legend>Where was your key created?</legend>
     </fieldset>
 
-    <label class="lab" for="mode">What should the assistant be able to do?</label>
-    <select id="mode">
-      <option value="read">Read only &mdash; balances, positions and orders</option>
-      <option value="trade">Read and trade &mdash; also place and cancel orders</option>
-    </select>
-    <p class="note" id="mode-note"></p>
+    <div class="field">
+      <label class="lab" for="mode">What should the assistant be able to do?</label>
+      <select id="mode">
+        <option value="read">Read only &mdash; balances, positions and orders</option>
+        <option value="trade">Read and trade &mdash; also place and cancel orders</option>
+      </select>
+      <p class="note" id="mode-note"></p>
+    </div>
 
-    <label class="lab" for="key">API key</label>
-    <input id="key" type="password" autocomplete="off" autocapitalize="none"
-           spellcheck="false" placeholder="paste it here">
+    <div class="field">
+      <label class="lab" for="key">API key</label>
+      <input id="key" type="password" autocomplete="off" autocapitalize="none"
+             spellcheck="false" placeholder="paste it here">
+    </div>
 
-    <label class="lab" for="secret">API secret</label>
-    <input id="secret" type="password" autocomplete="off" autocapitalize="none"
-           spellcheck="false" placeholder="shown only once, when you create the key">
+    <div class="field">
+      <label class="lab" for="secret">API secret</label>
+      <input id="secret" type="password" autocomplete="off" autocapitalize="none"
+             spellcheck="false" placeholder="shown only once, when you create the key">
+    </div>
 
     <div class="row">
       <label class="reveal"><input id="show" type="checkbox">Show what I typed</label>
