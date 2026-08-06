@@ -70,6 +70,40 @@ def test_store_supplies_settings_when_the_environment_is_silent():
     assert (cfg.api_key, cfg.api_secret) == ("k", "s")
 
 
+def test_one_load_uses_one_complete_store_snapshot(monkeypatch):
+    """An atomic replacement must not be split across one Config instance."""
+    before = {
+        "DELTA_MCP_ENV": "india_testnet",
+        "DELTA_API_KEY": "before-key",
+        "DELTA_API_SECRET": "before-secret",
+        "DELTA_MCP_DEBUG": "0",
+    }
+    after = {
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "after-key",
+        "DELTA_API_SECRET": "after-secret",
+        "DELTA_MCP_DEBUG": "1",
+    }
+    reads = 0
+
+    def changing_store():
+        nonlocal reads
+        reads += 1
+        return before if reads == 1 else after
+
+    monkeypatch.setattr(store, "read", changing_store)
+
+    cfg = config_mod.load()
+
+    assert reads == 1
+    assert (cfg.env, cfg.api_key, cfg.api_secret, cfg.debug) == (
+        "india_testnet",
+        "before-key",
+        "before-secret",
+        False,
+    )
+
+
 def test_client_environment_beats_the_store(monkeypatch):
     write_store("DELTA_API_KEY=from-file\nDELTA_API_SECRET=from-file\n")
     monkeypatch.setenv("DELTA_API_KEY", "from-client")

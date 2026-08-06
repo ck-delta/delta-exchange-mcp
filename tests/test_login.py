@@ -1,4 +1,6 @@
+import httpx
 import pytest
+import respx
 
 from delta_exchange_mcp import config as config_mod
 from delta_exchange_mcp import login, store
@@ -23,6 +25,51 @@ def check_returning(**kwargs):
         return login.Check(**kwargs)
 
     return fake
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(429, "rate_limit_exceeded"), (503, "service_unavailable")],
+)
+@respx.mock
+async def test_api_unavailability_is_not_a_credential_rejection(
+    monkeypatch, status, code
+):
+    """A terminal retry response says nothing about whether the credentials work."""
+
+    async def no_sleep(_delay):
+        pass
+
+    monkeypatch.setattr("delta_exchange_mcp.client.asyncio.sleep", no_sleep)
+    route = respx.get(f"{config_mod.INDIA_TESTNET_REST}/profile").mock(
+        return_value=httpx.Response(
+            status,
+            json={"success": False, "error": {"code": code}},
+        )
+    )
+
+    result = await login._check("india_testnet", "key", "secret")
+
+    assert route.call_count == 3
+    assert result.ok is False
+    assert result.reachable is False
+
+
+@respx.mock
+async def test_api_key_rejection_is_a_credential_rejection():
+    """A documented authentication failure is decisive and must prevent a save."""
+    route = respx.get(f"{config_mod.INDIA_TESTNET_REST}/profile").mock(
+        return_value=httpx.Response(
+            401,
+            json={"success": False, "error": {"code": "InvalidApiKey"}},
+        )
+    )
+
+    result = await login._check("india_testnet", "key", "secret")
+
+    assert route.call_count == 1
+    assert result.ok is False
+    assert result.reachable is True
 
 
 def test_refuses_without_a_terminal(monkeypatch, capsys):
@@ -100,6 +147,147 @@ def test_no_verify_skips_the_call(terminal, monkeypatch):
     monkeypatch.setattr(login, "_check", explode)
     assert login.run(verify=False) == 0
     assert config_mod.load().has_credentials is True
+
+
+def test_blank_answers_keep_a_saved_pair_and_its_environment(monkeypatch, capsys):
+    """Enter should mean keep, without displaying either half of the saved pair."""
+    saved_key = "saved-key-never-print"
+    saved_secret = "saved-secret-never-print"
+    assert (
+        store.write(
+            {
+                "DELTA_MCP_ENV": "india_testnet",
+                "DELTA_API_KEY": saved_key,
+                "DELTA_API_SECRET": saved_secret,
+            }
+        )
+        is None
+    )
+    monkeypatch.setattr(login.sys, "stdin", FakeTty())
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or "")
+    secret_prompts = []
+    answers = iter(["", ""])
+    monkeypatch.setattr(
+        login.getpass,
+        "getpass",
+        lambda prompt="": secret_prompts.append(prompt) or next(answers),
+    )
+    checked = []
+
+    async def successful_check(env, key, secret):
+        checked.append((env, key, secret))
+        return login.Check(ok=True, reachable=True, detail="")
+
+    monkeypatch.setattr(login, "_check", successful_check)
+
+    assert login.run() == 0
+
+    assert "[india_testnet]" in prompts[0]
+    assert all("keep" in prompt.lower() for prompt in secret_prompts)
+    assert checked == [("india_testnet", saved_key, saved_secret)]
+    assert store.read() == {
+        "DELTA_API_KEY": saved_key,
+        "DELTA_API_SECRET": saved_secret,
+        "DELTA_MCP_ENV": "india_testnet",
+    }
+    output = capsys.readouterr()
+    rendered = output.out + output.err
+    assert saved_key not in rendered
+    assert saved_secret not in rendered
+
+
+def test_changing_environment_requires_a_new_pair_even_without_verify(
+    monkeypatch, capsys
+):
+    """An old key must not be rebound to another environment by blank answers."""
+    original = {
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "prod-key",
+        "DELTA_API_SECRET": "prod-secret",
+    }
+    assert store.write(original) is None
+    monkeypatch.setattr(login.sys, "stdin", FakeTty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "india_testnet")
+    answers = iter(["", ""])
+    monkeypatch.setattr(login.getpass, "getpass", lambda prompt="": next(answers))
+
+    assert login.run(verify=False) == 1
+
+    assert "changing environments" in capsys.readouterr().err
+    assert store.read() == original
+
+
+def test_a_new_pair_can_move_the_saved_environment(monkeypatch):
+    original = {
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "prod-key",
+        "DELTA_API_SECRET": "prod-secret",
+    }
+    assert store.write(original) is None
+    monkeypatch.setattr(login.sys, "stdin", FakeTty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "india_testnet")
+    answers = iter(["testnet-key", "testnet-secret"])
+    monkeypatch.setattr(login.getpass, "getpass", lambda prompt="": next(answers))
+
+    assert login.run(verify=False) == 0
+    assert store.read() == {
+        "DELTA_API_KEY": "testnet-key",
+        "DELTA_API_SECRET": "testnet-secret",
+        "DELTA_MCP_ENV": "india_testnet",
+    }
+
+
+def test_blank_credentials_without_a_saved_pair_are_explained(monkeypatch, capsys):
+    monkeypatch.setattr(login.sys, "stdin", FakeTty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    answers = iter(["", ""])
+    monkeypatch.setattr(login.getpass, "getpass", lambda prompt="": next(answers))
+
+    assert login.run(verify=False) == 1
+
+    assert "no complete credential pair is saved" in capsys.readouterr().err.lower()
+    assert config_mod.load().has_credentials is False
+
+
+def test_a_saved_pair_without_a_valid_environment_cannot_be_kept(monkeypatch, capsys):
+    original = {"DELTA_API_KEY": "old-key", "DELTA_API_SECRET": "old-secret"}
+    path = store.path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("DELTA_API_KEY=old-key\nDELTA_API_SECRET=old-secret\n")
+    monkeypatch.setattr(login.sys, "stdin", FakeTty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    prompts = []
+    answers = iter(["", ""])
+    monkeypatch.setattr(
+        login.getpass,
+        "getpass",
+        lambda prompt="": prompts.append(prompt) or next(answers),
+    )
+
+    assert login.run(verify=False) == 1
+
+    assert all("keep" not in prompt.lower() for prompt in prompts)
+    assert "no valid environment" in capsys.readouterr().err.lower()
+    assert store.read() == original
+
+
+def test_a_partial_replacement_never_mixes_with_the_saved_pair(monkeypatch, capsys):
+    original = {
+        "DELTA_MCP_ENV": "india_testnet",
+        "DELTA_API_KEY": "old-key",
+        "DELTA_API_SECRET": "old-secret",
+    }
+    assert store.write(original) is None
+    monkeypatch.setattr(login.sys, "stdin", FakeTty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    answers = iter(["new-key", ""])
+    monkeypatch.setattr(login.getpass, "getpass", lambda prompt="": next(answers))
+
+    assert login.run(verify=False) == 1
+
+    assert "enter both to replace" in capsys.readouterr().err.lower()
+    assert store.read() == original
 
 
 def test_half_a_pair_is_refused(monkeypatch, capsys):
