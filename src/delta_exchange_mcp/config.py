@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,14 +112,25 @@ def mode_key(client: str) -> str:
     """The settings-file name carrying the trading mode for one named client.
 
     The name comes from the MCP handshake, where a client identifies itself as anything
-    it likes — "Claude Desktop", "claude-ai", "Visual Studio Code". Everything outside
-    letters and digits collapses to an underscore so the result is a legal dotenv key,
-    and a name with nothing usable in it yields no key rather than a shared one.
+    it likes — "Claude Desktop", "claude-ai", "Visual Studio Code". The readable part is
+    only a label; the digest of the exact, self-reported name is the binding. Without it,
+    punctuation variants such as ``foo-bar`` and ``foo bar`` collapse to one dotenv key
+    and one client can inherit another one's trading choice.
+
+    This is collision-resistant convenience scoping, not authenticated client identity.
+    A client can still claim another client's exact name; a future protocol-level host id
+    is needed to make that an authorization boundary.
     """
-    slug = "".join(c if c.isalnum() else "_" for c in client).strip("_").upper()
+    display = client.strip()
+    if not display:
+        return ""
+    slug = "".join(c if c.isascii() and c.isalnum() else "_" for c in display)
+    slug = slug.strip("_").upper()
     while "__" in slug:
         slug = slug.replace("__", "_")
-    return f"{_MODE_PREFIX}{slug}" if slug else ""
+    slug = slug[:32] or "CLIENT"
+    digest = hashlib.sha256(client.encode()).hexdigest()[:12].upper()
+    return f"{_MODE_PREFIX}{slug}_{digest}"
 
 
 def mode_for_client(client: str) -> Mode:

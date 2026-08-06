@@ -11,8 +11,10 @@ import json
 from contextlib import asynccontextmanager
 
 import anyio
+import httpx
 import mcp.types as types
 import pytest
+import respx
 from mcp.client.session import ClientSession
 from mcp.shared.memory import create_client_server_memory_streams
 
@@ -26,9 +28,10 @@ SECRET = "typed-into-the-form-secret"
 class Session:
     """A connected client plus the notifications the server pushed to it."""
 
-    def __init__(self, client, initialized):
+    def __init__(self, client, initialized, mcp):
         self.client = client
         self.initialized = initialized
+        self.server = mcp
         self.notifications = []
 
     async def tool_names(self):
@@ -36,7 +39,16 @@ class Session:
 
     async def call(self, name, **arguments):
         result = await self.client.call_tool(name, arguments)
+        if result.structuredContent is not None:
+            return result.structuredContent
         return json.loads(result.content[0].text)
+
+    async def raw_call(self, name, **arguments):
+        return await self.client.call_tool(name, arguments)
+
+    async def open_form(self):
+        result = await self.client.call_tool("setup_credentials", {})
+        return result.meta["ui"]["saveGrant"]
 
     def saw_tool_list_changed(self):
         return any(
@@ -45,43 +57,48 @@ class Session:
 
 
 @asynccontextmanager
-async def connected(cfg=None, client_name=None):
+async def connected(cfg=None, client_name=None, mcp=None):
     """A client talking to a server started the way `main` starts it.
 
     The SDK's own `create_connected_server_and_client_session` builds initialization
     options from scratch, which would silently drop the one capability under test here.
     """
-    mcp = server.build_server(cfg or config_mod.load())
-    async with create_client_server_memory_streams() as (client_streams, server_streams):
-        client_read, client_write = client_streams
-        server_read, server_write = server_streams
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(
-                lambda: mcp._mcp_server.run(
-                    server_read,
-                    server_write,
-                    server.initialization_options(mcp),
-                    raise_exceptions=True,
+    app = mcp or server.build_server(cfg or config_mod.load())
+    owns_server = mcp is None
+    try:
+        async with create_client_server_memory_streams() as (client_streams, server_streams):
+            client_read, client_write = client_streams
+            server_read, server_write = server_streams
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    lambda: app._mcp_server.run(
+                        server_read,
+                        server_write,
+                        server.initialization_options(app),
+                        raise_exceptions=True,
+                    )
                 )
-            )
-            box = {}
+                box = {}
 
-            async def collect(message):
-                if isinstance(message, types.ServerNotification):
-                    box["session"].notifications.append(message.root)
+                async def collect(message):
+                    if isinstance(message, types.ServerNotification):
+                        box["session"].notifications.append(message.root)
 
-            info = (
-                types.Implementation(name=client_name, version="1")
-                if client_name
-                else None
-            )
-            async with ClientSession(
-                client_read, client_write, message_handler=collect, client_info=info
-            ) as client:
-                initialized = await client.initialize()
-                box["session"] = Session(client, initialized)
-                yield box["session"]
-            tg.cancel_scope.cancel()
+                info = (
+                    types.Implementation(name=client_name, version="1")
+                    if client_name
+                    else None
+                )
+                async with ClientSession(
+                    client_read, client_write, message_handler=collect, client_info=info
+                ) as client:
+                    initialized = await client.initialize()
+                    box["session"] = Session(client, initialized, app)
+                    yield box["session"]
+                tg.cancel_scope.cancel()
+    finally:
+        if owns_server:
+            await app.close_live_client()
 
 
 @pytest.fixture
@@ -94,14 +111,16 @@ def accepted(monkeypatch):
     monkeypatch.setattr(credentials, "check", check)
 
 
-async def save(session):
-    await session.call("setup_credentials")
-    return await session.call(
-        "save_credentials",
-        environment="india_testnet",
-        api_key=KEY,
-        api_secret=SECRET,
-    )
+async def save(session, **overrides):
+    grant = await session.open_form()
+    arguments = {
+        "environment": "india_testnet",
+        "api_key": KEY,
+        "api_secret": SECRET,
+        "grant": grant,
+    }
+    arguments.update(overrides)
+    return await session.call("save_credentials", **arguments)
 
 
 # --- what the server promises at startup ---------------------------------------------
@@ -183,17 +202,66 @@ async def test_a_second_save_does_not_register_the_account_tools_twice(accepted)
         assert await session.tool_names() == first
 
 
-async def test_replacing_a_key_already_in_use_asks_for_a_restart(accepted):
-    """The registered account tools hold a client built from the key being replaced.
-
-    Nothing rebuilds them, so they would go on signing with the old key. Both the message
-    and the status tool have to say so, or they contradict each other.
-    """
+async def test_replacing_a_key_already_in_use_rebinds_without_a_restart(accepted):
+    """Every registered surface shares the rebindable client, so rotation is immediate."""
     async with connected() as session:
         await save(session)
         again = await save(session)
-        assert "Restart this client" in again["message"]
-        assert (await session.call("get_connection_status"))["restart_required"] is True
+        assert "live in this session" in again["message"]
+        assert (await session.call("get_connection_status"))["restart_required"] is False
+
+
+@respx.mock
+async def test_a_rotated_key_signs_the_next_account_request(accepted):
+    """Hot status is not enough: the shared client must actually use the new identity."""
+    rotated = "rotated-in-the-form-key"
+    route = respx.get(f"{config_mod.INDIA_TESTNET_REST}/profile").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {"id": 7}})
+    )
+    async with connected() as session:
+        await save(session)
+        await save(session, api_key=rotated)
+        await session.call("get_profile")
+
+    assert route.called
+    assert route.calls.last.request.headers["api-key"] == rotated
+
+
+@respx.mock
+async def test_the_first_save_rebinds_market_and_account_tools_to_one_environment(accepted):
+    """Public and authenticated closures must move together, not split across sites."""
+    ticker = respx.get(f"{config_mod.INDIA_TESTNET_REST}/tickers/BTCUSD").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {"symbol": "BTCUSD"}})
+    )
+    profile = respx.get(f"{config_mod.INDIA_TESTNET_REST}/profile").mock(
+        return_value=httpx.Response(200, json={"success": True, "result": {"id": 7}})
+    )
+    async with connected() as session:
+        await save(session)
+        await session.call("get_ticker", symbol="BTCUSD")
+        await session.call("get_profile")
+
+    assert ticker.called and profile.called
+
+
+async def test_a_grant_from_a_closed_session_cannot_be_used_by_a_new_one(accepted):
+    """The app capability is session-bound even while its ten-minute TTL remains."""
+    app = server.build_server(config_mod.load())
+    try:
+        async with connected(mcp=app) as first:
+            grant = await first.open_form()
+
+        async with connected(mcp=app) as second:
+            result = await second.call(
+                "save_credentials",
+                environment="india_testnet",
+                api_key=KEY,
+                api_secret=SECRET,
+                grant=grant,
+            )
+            assert result["status"] == "refused"
+    finally:
+        await app.close_live_client()
 
 
 # --- what still needs a restart ------------------------------------------------------
@@ -207,8 +275,8 @@ async def test_trade_mode_still_waits_for_a_restart(accepted, monkeypatch):
     """
     monkeypatch.setenv("DELTA_MCP_MODE", "trade")
     async with connected() as session:
-        result = await save(session)
-        assert "Restart this client" in result["message"]
+        result = await save(session, mode="trade")
+        assert "Restart this app to turn trading on" in result["message"]
 
         # The reads still came up — only the mutations wait. Suppressing the notification
         # too would leave them registered and unreachable, which is the worst of both.
@@ -218,7 +286,8 @@ async def test_trade_mode_still_waits_for_a_restart(accepted, monkeypatch):
         assert "place_order" not in names
 
         status = await session.call("get_connection_status")
-        assert status["mode"] == "trade"
+        assert status["mode"] == "read"
+        assert status["mode_after_restart"] == "trade"
         assert status["restart_required"] is True
 
 
@@ -315,11 +384,111 @@ async def test_trading_arms_only_for_the_client_it_was_enabled_for():
         assert status["mode_after_restart"] == "read"
 
 
-async def test_the_client_name_is_matched_however_it_is_punctuated():
-    """Clients name themselves freely — "Claude Desktop", "claude-ai", "claude.ai"."""
+async def test_mode_only_save_does_not_read_or_rewrite_the_stored_credentials():
+    """Once connected, changing access mode never asks the app to handle the key again."""
+    credentialled()
+    before = store.read()
+    async with connected(client_name="Claude Desktop") as session:
+        grant = await session.open_form()
+        result = await session.call("save_mode", mode="trade", grant=grant)
+        assert result["status"] == "saved"
+        assert result["effective_mode"] == "trade"
+        assert "Restart this app to turn trading on" in result["next_step"]
+        assert "place_order" not in await session.tool_names()
+
+    after = store.read()
+    assert after["DELTA_API_KEY"] == before["DELTA_API_KEY"]
+    assert after["DELTA_API_SECRET"] == before["DELTA_API_SECRET"]
+    assert after[config_mod.mode_key("Claude Desktop")] == "trade"
+
+
+async def test_mode_only_read_disarms_live_trading_immediately(capsys):
+    """The safe direction takes effect now and leaves an explicit runtime transition."""
+    credentialled(mode_for="Claude Desktop")
+    async with connected(client_name="Claude Desktop") as session:
+        assert "place_order" in await session.tool_names()
+        grant = await session.open_form()
+        result = await session.call("save_mode", mode="read", grant=grant)
+
+        assert result["status"] == "saved"
+        assert "Trading stays off" in result["next_step"]
+        assert "place_order" not in await session.tool_names()
+        status = await session.call("get_connection_status")
+        assert status["mode"] == "read"
+        assert status["mode_after_restart"] == "read"
+        assert status["restart_required"] is False
+
+    transitions = capsys.readouterr().err
+    assert "runtime transition=trade-armed" in transitions
+    assert "runtime transition=trade-disarmed-read-mode" in transitions
+    assert KEY not in transitions and SECRET not in transitions
+
+
+async def test_external_identity_drift_disarms_trading_before_hot_rebind(capsys):
+    """A status check cannot leave mutations signed for a changed site or account."""
+    client_name = "Claude Desktop"
+    credentialled(mode_for=client_name)
+    async with connected(client_name=client_name) as session:
+        assert "place_order" in await session.tool_names()
+        store.write(
+            {
+                "DELTA_MCP_ENV": "india_prod",
+                "DELTA_API_KEY": "externally-rotated-key",
+                "DELTA_API_SECRET": "externally-rotated-secret",
+                config_mod.mode_key(client_name): "trade",
+            }
+        )
+
+        status = await session.call("get_connection_status")
+        assert status["environment"] == "india_prod"
+        assert status["mode"] == "read"
+        assert status["mode_after_restart"] == "trade"
+        assert status["restart_required"] is True
+        assert "place_order" not in await session.tool_names()
+        assert "get_positions" in await session.tool_names()
+
+    transitions = capsys.readouterr().err
+    assert "runtime transition=trade-disarmed-identity-change" in transitions
+    assert "identity-rebound" in transitions
+    assert "env=india_prod mode=read surface=market+account" in transitions
+    assert "externally-rotated" not in transitions
+
+
+async def test_mode_only_save_reports_when_trading_is_already_live():
+    """Re-saving the current choice must not tell someone to restart a live surface."""
+    credentialled(mode_for="Claude Desktop")
+    async with connected(client_name="Claude Desktop") as session:
+        assert "place_order" in await session.tool_names()
+        grant = await session.open_form()
+        result = await session.call("save_mode", mode="trade", grant=grant)
+        assert result["status"] == "saved"
+        assert "Trading is live" in result["next_step"]
+        assert result["effective_mode"] == "trade"
+        assert (await session.call("get_connection_status"))["restart_required"] is False
+
+
+async def test_process_mode_override_is_reported_with_the_effective_mode(
+    accepted, monkeypatch
+):
+    """The form shows what will run, even when the client's config beats its selection."""
+    monkeypatch.setenv("DELTA_MCP_MODE", "trade")
+    async with connected(client_name="Claude Desktop") as session:
+        result = await save(session, mode="read")
+        assert result["status"] == "overridden"
+        assert result["effective_mode"] == "trade"
+        assert result["mode_setting"] == config_mod.mode_key("Claude Desktop")
+        assert "DELTA_MCP_MODE" in result["message"]
+        assert "future sessions trade" in result["next_step"]
+        assert "Restart this app to turn trading on" not in result["message"]
+        assert "get_positions" in await session.tool_names()
+        assert "place_order" not in await session.tool_names()
+
+
+async def test_punctuation_variants_do_not_inherit_each_others_trading_choice():
+    """The readable slug may match, but the exact handshake name is the binding."""
     credentialled(mode_for="claude-ai")
     async with connected(client_name="Claude AI") as session:
-        assert "place_order" in await session.tool_names()
+        assert "place_order" not in await session.tool_names()
 
 
 async def test_choosing_trade_does_not_arm_it_in_the_session_that_chose_it(accepted):
@@ -327,13 +496,14 @@ async def test_choosing_trade_does_not_arm_it_in_the_session_that_chose_it(accep
     turn that asked for it, is exactly what the whole gate exists to prevent.
     """
     async with connected(client_name="Claude Desktop") as session:
-        await session.call("setup_credentials")
+        grant = await session.open_form()
         result = await session.call(
             "save_credentials",
             environment="india_testnet",
             api_key=KEY,
             api_secret=SECRET,
             mode="trade",
+            grant=grant,
         )
         assert result["status"] == "saved"
         assert "Restart this app to turn trading on" in result["message"]
@@ -354,25 +524,21 @@ async def test_choosing_trade_does_not_arm_it_in_the_session_that_chose_it(accep
         assert "place_order" in await session.tool_names()
 
 
-async def test_a_client_whose_name_yields_no_key_is_refused_rather_than_ignored(accepted):
-    """A name of pure punctuation is truthy but scopes to nothing.
-
-    Writing the key would be impossible and skipping it silently would leave the form
-    reporting that trading was on while nothing had been stored at all.
-    """
+async def test_a_punctuation_only_client_name_gets_a_distinct_safe_binding(accepted):
+    """The digest binds even names whose readable slug has no letters or digits."""
     async with connected(client_name="!!!") as session:
-        await session.call("setup_credentials")
+        grant = await session.open_form()
         result = await session.call(
             "save_credentials",
             environment="india_testnet",
             api_key=KEY,
             api_secret=SECRET,
             mode="trade",
+            grant=grant,
         )
-        assert result["status"] == "invalid"
-        assert "trading cannot be turned on for it alone" in result["message"]
-        # Nothing was written, so nothing can arm on the next start either.
-        assert not any(k.startswith("DELTA_MCP_MODE") for k in store.read())
+        assert result["status"] == "saved"
+        assert result["mode_setting"] == config_mod.mode_key("!!!")
+        assert store.read()[config_mod.mode_key("!!!")] == "trade"
 
 
 async def test_a_client_env_var_still_outranks_the_scoped_setting(monkeypatch):

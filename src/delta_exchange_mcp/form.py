@@ -80,11 +80,16 @@ in a substituted face, and measures its own height against that face.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
+from mcp.types import CallToolResult, TextContent
 
 from delta_exchange_mcp import credentials, store
 from delta_exchange_mcp.config import (
@@ -93,12 +98,33 @@ from delta_exchange_mcp.config import (
     DEFAULT_ENV,
     DEFAULT_MODE,
     MODES,
+    load,
+    mode_for_client,
     mode_key,
 )
 
-# Given the session to notify on, brings the tool list up to date for a credential that
-# was just saved, and reports whether anything is still waiting for a restart.
-Activate = Callable[[ServerSession], Awaitable[bool]]
+@dataclass(frozen=True)
+class Activation:
+    """The read and mutation surfaces that are actually live after reconciliation."""
+
+    account_ready: bool
+    mode: str
+
+
+# Given the session to notify on, brings the live surface up to date after a form save.
+Activate = Callable[[ServerSession], Awaitable[Activation]]
+
+_GRANT_TTL_SECONDS = 10 * 60
+
+
+@dataclass
+class _Grant:
+    token: str
+    expires_at: float
+    in_use: bool = False
+
+
+_DIRECT_SESSION = object()
 
 VIEW_URI = "ui://delta-exchange/credentials.html"
 
@@ -332,6 +358,9 @@ _TEMPLATE = """<!DOCTYPE html>
   var pending = {};
   var ready = false;
   var saving = false;
+  var saveGrant = "";
+  var configured = false;
+  var currentEnvironment = "";
 
   var root = document.documentElement;
   var hostFonts = document.getElementById("host-fonts");
@@ -371,6 +400,11 @@ _TEMPLATE = """<!DOCTYPE html>
     return picked ? picked.value : CONFIG.default_environment;
   }
 
+  function selectEnv(value) {
+    var radio = envsEl.querySelector('input[name="env"][value="' + value + '"]');
+    if (radio) radio.checked = true;
+  }
+
   function say(text, cls) {
     stateEl.textContent = text;
     stateEl.className = cls || "";
@@ -388,6 +422,15 @@ _TEMPLATE = """<!DOCTYPE html>
         if (pending[id]) { delete pending[id]; reject(new Error(method + " timed out")); }
       }, timeoutMs || 30000);
     });
+  }
+
+  // setup_credentials puts this capability only in tool-result metadata. It never enters
+  // model-visible content, and the server accepts it once, from this MCP session only.
+  function captureGrant(result) {
+    var meta = result && result._meta;
+    var ui = meta && meta.ui;
+    if (ui && ui.saveGrant) saveGrant = ui.saveGrant;
+    refreshSaveState();
   }
 
   // Each variable is applied only when it has a value, so a host sending part of a palette
@@ -426,6 +469,7 @@ _TEMPLATE = """<!DOCTYPE html>
     // around it. This is how a theme switch mid-conversation arrives.
     if (msg.method !== undefined && msg.id === undefined) {
       if (msg.method === "ui/notifications/host-context-changed") applyHostContext(msg.params);
+      if (msg.method === "ui/notifications/tool-result") captureGrant(msg.params);
       return;
     }
     // The host may call into the view; answer rather than ignore, so a host waiting on a
@@ -458,7 +502,12 @@ _TEMPLATE = """<!DOCTYPE html>
   function off(el) { return el.getAttribute("aria-disabled") === "true"; }
 
   function refreshSaveState() {
-    enable(saveEl, ready && !saving && !!keyEl.value.trim() && !!secretEl.value.trim());
+    var hasKey = !!keyEl.value.trim();
+    var hasSecret = !!secretEl.value.trim();
+    var fullPair = hasKey && hasSecret;
+    var modeOnly = configured && !hasKey && !hasSecret && chosenEnv() === currentEnvironment;
+    saveEl.textContent = modeOnly ? "Save access mode" : "Check and save";
+    enable(saveEl, ready && !!saveGrant && !saving && (fullPair || modeOnly));
   }
 
   showEl.addEventListener("change", function () {
@@ -469,6 +518,7 @@ _TEMPLATE = """<!DOCTYPE html>
 
   keyEl.addEventListener("input", refreshSaveState);
   secretEl.addEventListener("input", refreshSaveState);
+  envsEl.addEventListener("change", refreshSaveState);
 
   // Says what the choice costs before it is made. Trading is scoped to this client, so
   // the reassurance about the others is the part worth stating.
@@ -480,13 +530,20 @@ _TEMPLATE = """<!DOCTYPE html>
     resize();
   }
 
-  modeEl.addEventListener("change", syncModeNote);
+  modeEl.addEventListener("change", function () {
+    syncModeNote();
+    refreshSaveState();
+  });
 
   againEl.addEventListener("click", function () {
-    document.body.classList.remove("done");
-    refreshSaveState();
-    resize();
-    keyEl.focus();
+    request("tools/call", { name: "setup_credentials", arguments: {} }, 15000)
+      .then(function (result) {
+        captureGrant(result);
+        document.body.classList.remove("done");
+        resize();
+        keyEl.focus();
+      })
+      .catch(function (err) { say("Could not reopen the form: " + err.message, "err"); });
   });
 
   createEl.addEventListener("click", function () {
@@ -502,17 +559,21 @@ _TEMPLATE = """<!DOCTYPE html>
     if (off(saveEl) || saving) return;
     var key = keyEl.value.trim();
     var secret = secretEl.value.trim();
+    var modeOnly = configured && !key && !secret && chosenEnv() === currentEnvironment;
     saving = true;
     refreshSaveState();
-    say("Checking the key against Delta\\u2026");
+    say(modeOnly ? "Saving the access mode\\u2026" : "Checking the key against Delta\\u2026");
     // Longer than the default: this call asks Delta about the key, and the client behind
     // it backs off and retries a rate limit. Timing out sooner than the work can finish
     // would report a failure over a key that was in fact saved.
     request("tools/call", {
-      name: "save_credentials",
-      arguments: {
-        environment: chosenEnv(), api_key: key, api_secret: secret, mode: modeEl.value,
-      },
+      name: modeOnly ? "save_mode" : "save_credentials",
+      arguments: modeOnly
+        ? { mode: modeEl.value, grant: saveGrant }
+        : {
+            environment: chosenEnv(), api_key: key, api_secret: secret,
+            mode: modeEl.value, grant: saveGrant,
+          },
     }, 120000).then(function (result) {
       var payload = readResult(result);
       var status = payload.status || "failed";
@@ -520,6 +581,9 @@ _TEMPLATE = """<!DOCTYPE html>
       // Anything else did not, so the fields stay as typed and the button comes back.
       var stored = status === "saved" || status === "unverified" || status === "overridden";
       if (stored) {
+        saveGrant = "";
+        configured = true;
+        currentEnvironment = chosenEnv();
         // Do not leave a secret sitting in a rendered field once it is stored.
         keyEl.value = "";
         secretEl.value = "";
@@ -530,10 +594,13 @@ _TEMPLATE = """<!DOCTYPE html>
       refreshSaveState();
       // Only a clean save swaps the form out. The other two stored cases still need the
       // fields, because what they say is "saved, and here is what to fix".
-      if (status === "saved" && payload.account) {
-        doneWho.textContent = "Connected as " + payload.account;
+      if (status === "saved" && (payload.account || payload.mode_updated)) {
+        doneWho.textContent = payload.account
+          ? "Connected as " + payload.account
+          : "Access mode updated";
         doneWhere.textContent = "Saved to " + (payload.path || "this computer");
         doneNext.textContent = payload.next_step || "";
+        againEl.textContent = payload.account ? "Use another key" : "Change again";
         document.body.classList.add("done");
         say("");
         return;
@@ -582,6 +649,12 @@ _TEMPLATE = """<!DOCTYPE html>
         // moment ago must not be shown "Read only" and quietly downgraded on the next save.
         var current = now && (now.mode_after_restart || now.mode);
         if (current) { modeEl.value = current; syncModeNote(); }
+        if (now && now.environment) {
+          currentEnvironment = now.environment;
+          selectEnv(now.environment);
+        }
+        configured = !!(now && now.credentials_configured);
+        refreshSaveState();
       })
       .catch(function () {});
     resize();
@@ -672,12 +745,18 @@ def _override_message(overridden: list[str]) -> str:
     key discards this one outright. A client supplying only the environment still uses this
     key, against the site it was not created on, where Delta rejects it as unknown.
     """
-    if {"DELTA_API_KEY", "DELTA_API_SECRET"} & set(overridden):
+    names = set(overridden)
+    if {"DELTA_API_KEY", "DELTA_API_SECRET"} & names:
         consequence = "so this key will not be used at all"
-    else:
+    elif "DELTA_MCP_ENV" in names:
         consequence = (
             "so your key will be used against the other site, where Delta will reject it "
             "as a key it has never seen"
+        )
+    else:
+        consequence = (
+            "so the mode selected here is not the mode this client will run; change "
+            "DELTA_MCP_MODE in this client's own configuration"
         )
     return (
         f"Saved to {store.path()}, but this client sets {', '.join(overridden)} in its own "
@@ -733,20 +812,96 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
     a conversation. It is optional so a test can register the form on its own rather than
     build a whole server.
 
-    `save_credentials` is hidden from the model by `_meta.ui.visibility`, which both
-    tested hosts honour. On a client that ignores it the tool becomes model-callable,
-    so it is written to be harmless there: it returns no stored value and never reads
-    the file back, meaning the worst a caller who does not already know the credentials
-    can achieve is to overwrite them with a pair Delta accepts — which they would have
-    to own. `shown` narrows even that, by requiring the form to have been opened first,
-    which is something the user can see happen. The `mode` argument does not widen it:
-    it is written scoped to the calling client and takes effect only on that client's
-    next start, so the most it can do is arm trading against a key its caller supplied.
+    The host-enforced `_meta.ui.visibility=["app"]` is the primary boundary around both
+    save tools. A short-lived one-use grant adds defence in depth for a host that exposes
+    an app-only schema to its model accidentally. Standard tools/call carries no trustworthy
+    app-versus-model provenance, so this cannot defend against a malicious host that leaks
+    the tool result metadata as well; the grant is deliberately documented as a second gate,
+    not as authenticated user presence.
     """
-    shown = False
+    # Keep the session object itself as the key. An integer ``id(session)`` can be reused
+    # after a connection closes while its grant is still live, which would let a new
+    # session inherit that old grant. Retaining the object for at most the grant TTL makes
+    # that identity unambiguous and bounds the lifetime of the reference.
+    grants: dict[object, _Grant] = {}
+
+    def session_key(ctx: Context) -> object:
+        try:
+            return ctx.session
+        except ValueError:
+            # Direct in-process tests have no protocol session. They still exercise the
+            # grant lifecycle under one sentinel rather than bypassing it.
+            return _DIRECT_SESSION
+
+    def clean_grants() -> None:
+        now = time.monotonic()
+        for key, pending in list(grants.items()):
+            if pending.expires_at <= now:
+                del grants[key]
+
+    def issue_grant(ctx: Context) -> _Grant:
+        clean_grants()
+        pending = _Grant(
+            token=secrets.token_urlsafe(32),
+            expires_at=time.monotonic() + _GRANT_TTL_SECONDS,
+        )
+        grants[session_key(ctx)] = pending
+        return pending
+
+    def begin_grant(ctx: Context, offered: str) -> tuple[object, _Grant] | None:
+        clean_grants()
+        key = session_key(ctx)
+        pending = grants.get(key)
+        if (
+            pending is None
+            or pending.in_use
+            or not offered
+            or not hmac.compare_digest(pending.token, offered)
+        ):
+            return None
+        pending.in_use = True
+        return key, pending
+
+    def finish_grant(key: object, pending: _Grant, *, used: bool) -> None:
+        if grants.get(key) is not pending:
+            return
+        if used:
+            del grants[key]
+        else:
+            pending.in_use = False
+
+    def next_step(
+        client: str,
+        effective: str,
+        live_state: Activation,
+        *,
+        mode_overridden: bool = False,
+    ) -> str:
+        reads = (
+            "Your account tools are live in this session — just ask about your account. "
+            "If this client does not show them yet, restart it."
+            if live_state.account_ready
+            else "Restart this client to use your account."
+        )
+        scope = f"{client!r}, the name this client reported" if client else "this client"
+        if mode_overridden:
+            return (
+                f"{reads} This session is currently running in {live_state.mode} mode. "
+                "DELTA_MCP_MODE in this client's own configuration makes future sessions "
+                f"{effective} for {scope}; change that setting before restarting if that is "
+                "not what you want."
+            )
+        if effective == "trade":
+            if live_state.mode == "trade":
+                return f"{reads} Trading is live for {scope}."
+            return (
+                f"{reads} Restart this app to turn trading on for {scope}; other apps on "
+                "this computer stay read only."
+            )
+        return f"{reads} Trading stays off for {scope}."
 
     @mcp.tool(meta=_OPENS_VIEW)
-    async def setup_credentials() -> dict[str, str]:
+    async def setup_credentials(ctx: Context) -> CallToolResult:
         """Open a form for the user to enter their Delta API key, kept out of the chat.
 
         Call this whenever the user wants to log in, sign in, connect their Delta
@@ -756,27 +911,44 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         clients that cannot display a form, and whether this one can is reported back to
         you by this tool. Never ask for the key or secret in the conversation instead.
         """
-        nonlocal shown
-        shown = True
-        return {"status": "form_opened", "instructions": _opened_message()}
+        message = _opened_message()
+        pending = issue_grant(ctx)
+        return CallToolResult(
+            content=[TextContent(type="text", text=message)],
+            structuredContent={"status": "form_opened", "instructions": message},
+            _meta={
+                "ui": {
+                    "saveGrant": pending.token,
+                    "saveGrantExpiresIn": _GRANT_TTL_SECONDS,
+                }
+            },
+        )
 
     @mcp.tool(meta=_APP_ONLY)
     async def save_credentials(
-        environment: str, api_key: str, api_secret: str, ctx: Context, mode: str = "read"
+        environment: str,
+        api_key: str,
+        api_secret: str,
+        grant: str,
+        ctx: Context,
+        mode: str = "read",
     ) -> dict[str, str]:
         """Save a key typed into the credential form. Called by the form, not by you.
 
         The values come from what the user typed inside the form's own frame. Do not
         call this yourself, and do not ask the user for these values in the chat.
         """
-        if not shown:
+        claimed = begin_grant(ctx, grant)
+        if claimed is None:
             return {
                 "status": "refused",
-                "message": "Open the credential form first.",
+                "message": "This form session expired or was already used. Open it again.",
             }
+        grant_key, pending = claimed
 
         env = (environment or "").strip().lower()
         if env not in BASE_URLS:
+            finish_grant(grant_key, pending, used=False)
             return {
                 "status": "invalid",
                 "message": f"{environment!r} is not one of {sorted(BASE_URLS)}.",
@@ -784,6 +956,7 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
 
         wanted = (mode or "").strip().lower() or DEFAULT_MODE
         if wanted not in MODES:
+            finish_grant(grant_key, pending, used=False)
             return {
                 "status": "invalid",
                 "message": f"{mode!r} is not one of {sorted(MODES)}.",
@@ -792,11 +965,9 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         # Trading is stored against the name this client gave in the handshake, never
         # under a shared one: the settings file is read by every client on the machine,
         # and one unscoped value would arm order placement in all of them.
-        # Tested on the key rather than the name: a name made only of punctuation is
-        # truthy but yields no key, and the mode would be dropped while this reported
-        # that trading was on.
         client = _client_name(ctx)
         if wanted == "trade" and not mode_key(client):
+            finish_grant(grant_key, pending, used=False)
             return {
                 "status": "invalid",
                 "message": (
@@ -809,6 +980,7 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         key = (api_key or "").strip()
         secret = (api_secret or "").strip()
         if not key or not secret:
+            finish_grant(grant_key, pending, used=False)
             return {
                 "status": "invalid",
                 "message": (
@@ -817,54 +989,66 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
                 ),
             }
 
-        result = await credentials.check(env, key, secret)
+        try:
+            result = await credentials.check(env, key, secret)
+        except BaseException:
+            finish_grant(grant_key, pending, used=False)
+            raise
         if result.reachable and not result.ok:
+            finish_grant(grant_key, pending, used=False)
             return {"status": "rejected", "message": _rejection(env, result)}
 
         problem = credentials.save(env, key, secret, client, wanted)
         if problem is not None:
+            finish_grant(grant_key, pending, used=False)
             return {"status": "failed", "message": problem}
+        # The credential tuple is durable now. Consume before any notification can fail so
+        # retrying an ambiguous response cannot write it a second time.
+        finish_grant(grant_key, pending, used=True)
 
         # Checked after the write, not before it: the file is what every other client on
         # this machine reads, so the key still belongs there even when this one ignores it.
-        overridden = credentials.overridden_by_client()
-        if overridden:
+        overridden = credentials.overridden_by_client(client)
+        if set(overridden) - {"DELTA_MCP_MODE"}:
             return {
                 "status": "overridden",
                 "path": str(store.path()),
                 "message": _override_message(overridden),
             }
 
-        # Leads with carrying on rather than restarting. The tools are registered by then,
-        # so the only open question is whether this client acted on being told the list
-        # changed, and asking it something settles that faster than a restart nobody needed.
-        ready = await activate(ctx.session) if activate is not None else False
-        reads = (
-            "Your account tools are live in this session — just ask about your account. "
-            "If this client does not show them yet, restart it."
-            if ready
-            else "Restart this client to use your account."
+        live_state = (
+            await activate(ctx.session)
+            if activate is not None
+            else Activation(account_ready=False, mode="read")
         )
-        # Trading is never armed in the session that asked for it. `activate` cannot see
-        # that it was asked for either — the mode it reads comes from the environment, and
-        # what was just written is scoped to this client in the file — so the restart has
-        # to be stated here rather than inferred from what `activate` returned.
-        next_step = (
-            f"{reads} Restart this app to turn trading on for it; other apps on this "
-            "computer stay read only."
-            if wanted == "trade"
-            else reads
+        effective = mode_for_client(client)
+        follow_up = next_step(
+            client,
+            effective,
+            live_state,
+            mode_overridden="DELTA_MCP_MODE" in overridden,
         )
+        common = {
+            "path": str(store.path()),
+            "next_step": follow_up,
+            "effective_mode": effective,
+            "client_name": client,
+            "mode_setting": mode_key(client),
+        }
+        if overridden:
+            return common | {
+                "status": "overridden",
+                "message": f"{_override_message(overridden)} {follow_up}",
+            }
 
         if not result.reachable:
             # Saved unverified on purpose: a flaky connection must not cost someone a key
             # they typed correctly, and the next real call will report the truth anyway.
-            return {
+            return common | {
                 "status": "unverified",
-                "path": str(store.path()),
                 "message": (
                     f"Saved to {store.path()}, but Delta could not be reached to check "
-                    f"it. {result.detail} {next_step}"
+                    f"it. {result.detail} {follow_up}"
                 ),
             }
 
@@ -875,17 +1059,79 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
         # The same facts twice: as fields, because the view renders them as its own
         # connected state rather than printing a paragraph, and as one sentence, because
         # that is what a client without a view has to show.
-        return {
+        return common | {
             "status": "saved",
             "account": result.detail,
+            "message": f"Connected{who}. Saved to {store.path()}. {follow_up}",
+        }
+
+    @mcp.tool(meta=_APP_ONLY)
+    async def save_mode(mode: str, grant: str, ctx: Context) -> dict[str, str]:
+        """Change this client's access mode without reading or resubmitting its key."""
+        claimed = begin_grant(ctx, grant)
+        if claimed is None:
+            return {
+                "status": "refused",
+                "message": "This form session expired or was already used. Open it again.",
+            }
+        grant_key, pending = claimed
+        wanted = (mode or "").strip().lower() or DEFAULT_MODE
+        if wanted not in MODES:
+            finish_grant(grant_key, pending, used=False)
+            return {
+                "status": "invalid",
+                "message": f"{mode!r} is not one of {sorted(MODES)}.",
+            }
+        client = _client_name(ctx)
+        binding = mode_key(client)
+        if not binding:
+            finish_grant(grant_key, pending, used=False)
+            return {
+                "status": "invalid",
+                "message": "This client did not report a name, so its mode cannot be scoped.",
+            }
+        if not load().has_credentials:
+            finish_grant(grant_key, pending, used=False)
+            return {
+                "status": "invalid",
+                "message": "Connect an account before changing its access mode.",
+            }
+        problem = credentials.save_mode(client, wanted)
+        if problem is not None:
+            finish_grant(grant_key, pending, used=False)
+            return {"status": "failed", "message": problem}
+        finish_grant(grant_key, pending, used=True)
+
+        live_state = (
+            await activate(ctx.session)
+            if activate is not None
+            else Activation(account_ready=False, mode="read")
+        )
+        overridden = [
+            name
+            for name in credentials.overridden_by_client(client)
+            if name == "DELTA_MCP_MODE"
+        ]
+        effective = mode_for_client(client)
+        follow_up = next_step(
+            client, effective, live_state, mode_overridden=bool(overridden)
+        )
+        common = {
+            "mode_updated": "true",
             "path": str(store.path()),
-            "next_step": next_step,
-            "message": (
-                f"Connected{who}. Saved to {store.path()}. {next_step}"
-                if wanted == "trade"
-                else f"Connected{who}. Saved to {store.path()}. {next_step} Trading stays "
-                "off — you can turn it on for this app in the same form."
-            ),
+            "next_step": follow_up,
+            "effective_mode": effective,
+            "client_name": client,
+            "mode_setting": binding,
+        }
+        if overridden:
+            return common | {
+                "status": "overridden",
+                "message": f"{_override_message(overridden)} {follow_up}",
+            }
+        return common | {
+            "status": "saved",
+            "message": f"Saved the access mode for {client!r}. {follow_up}",
         }
 
     # Named and titled rather than left to the function name: a host lists this resource

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 import anyio
-import mcp.types as types
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.lowlevel import NotificationOptions
 from mcp.server.models import InitializationOptions
 from mcp.server.session import ServerSession
@@ -68,119 +68,82 @@ at, what this client may do now, what it may do after a restart, and whether one
 """
 
 
-def connected_client_name(mcp: FastMCP) -> str:
-    """What the connected client called itself in the handshake, or "" before there is one.
-
-    Only reachable from inside a request: the session hangs off the request context, and
-    reading that context outside one raises rather than returning None.
-    """
-    try:
-        session = mcp._mcp_server.request_context.session
-    except LookupError:
-        return ""
+def _session_client_name(session: ServerSession) -> str:
     params = session.client_params
     return params.clientInfo.name if params and params.clientInfo else ""
 
 
-def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
+class DeltaMCP(FastMCP):
+    """FastMCP with a supported pre-list hook for session-scoped entitlements."""
+
+    def __init__(self) -> None:
+        self._before_list_tools: Callable[[ServerSession], Awaitable[None]] | None = None
+        self.live_client: DeltaClient | None = None
+        super().__init__("delta-exchange", instructions=INSTRUCTIONS)
+
+    def before_list_tools(
+        self, callback: Callable[[ServerSession], Awaitable[None]]
+    ) -> None:
+        self._before_list_tools = callback
+
+    async def list_tools(self):
+        """Apply a session entitlement before FastMCP builds the public tool list."""
+        if self._before_list_tools is not None:
+            try:
+                session = self.get_context().session
+            except ValueError:
+                # Direct in-process inspection has no MCP request or handshake. Startup
+                # registration is still complete, so there is no entitlement to apply.
+                pass
+            else:
+                await self._before_list_tools(session)
+        return await super().list_tools()
+
+    async def close_live_client(self) -> None:
+        if self.live_client is not None:
+            await self.live_client.aclose()
+
+
+def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
     cfg = cfg or config_mod.load()
-    mcp = FastMCP("delta-exchange", instructions=INSTRUCTIONS)
+    mcp = DeltaMCP()
     # FastMCP has no version argument, and the server it wraps reports the mcp SDK's own
     # version when this is left unset — so clients would see the SDK version as ours.
     mcp._mcp_server.version = PACKAGE_VERSION
-    client = DeltaClient(cfg)
 
+    # Mode controls which tools exist, not how HTTP is sent. Start the shared client in
+    # read mode and let the one runtime transition below arm mutations when appropriate.
+    live = replace(cfg, mode="read")
+    client = DeltaClient(live)
+    mcp.live_client = client
     log_path = debug_log.configure(cfg)
-
     market.register(mcp, client)
 
-    # The config the registered surface is actually running on. It stops being the one
-    # loaded at startup when a key saved through the form brings the account tools up
-    # without a restart.
-    live = cfg
-    restart_pending = False
-
-    async def activate(session: ServerSession) -> bool:
-        """Bring the tool list up to date after a credential was saved.
-
-        Returns True when nothing further is needed, so the caller can say so instead of
-        asking someone to restart the client they are in the middle of talking to.
-
-        Registering the tools is only half of it. The client read the tool list once, at
-        startup, and re-reads it only when told the list changed — so the notification is
-        what actually makes them reachable, and it is sent here because it belongs to the
-        same event as the registration.
-
-        A key replacing an existing one changes no tools and reports False, and means it:
-        the account tools already registered hold a client built from the key being
-        replaced, and nothing here rebuilds them, so a rotation does need the restart.
-        """
-        nonlocal live, restart_pending
-        if live.has_credentials:
-            restart_pending = True
-            return False
-        fresh = config_mod.load()
-        if not fresh.has_credentials:
-            return False
-        account.register(mcp, DeltaClient(fresh))
-        live = fresh
-        # Trading is deliberately left out. Arming real order placement should follow
-        # from the user editing their own client config, and that edit already implies
-        # the restart — it must not follow from a form submitted inside a chat.
-        restart_pending = fresh.mode == "trade"
-        await session.send_tool_list_changed()
-        return not restart_pending
-
-    # Registered whether or not credentials are set: someone with none needs to add a
-    # first key, and someone with one still rotates it or switches environment.
-    form.register(mcp, activate)
-    if cfg.has_credentials:
-        account.register(mcp, client)
-
-    @mcp.tool()
-    def get_connection_status() -> dict[str, object]:
-        """Whether an API key is configured, where it points, and if a restart is due.
-
-        Use this to answer "am I connected?", and to check whether a key the user just
-        saved has taken effect. Returns no key or secret value.
-        """
-        # Read the file rather than report startup state: another client on this machine
-        # shares it, so a key can appear without this process having been told.
-        stored = config_mod.load()
-        overridden = credentials.overridden_by_client()
-        # What this client is entitled to after its next start, which is not what it is
-        # running now if trading was chosen in the form during this session.
-        entitled = config_mod.mode_for_client(connected_client_name(mcp))
-        trade_pending = entitled == "trade" and live.mode != "trade"
-        return {
-            "environment": live.env,
-            "credentials_configured": stored.has_credentials,
-            "account_tools_available": live.has_credentials,
-            "mode": live.mode,
-            "mode_after_restart": entitled,
-            # A restart re-reads the file, so it cannot help when this client passes its
-            # own value on every launch. `overridden_by_client` is then what to act on:
-            # those names have to come out of the client's own MCP entry.
-            "restart_required": not overridden
-            and stored.has_credentials
-            and (restart_pending or trade_pending or not live.has_credentials),
-            "overridden_by_client": overridden,
-            "version": PACKAGE_VERSION,
-            # Which build is actually running. The version is the same on every commit of a
-            # branch, so it cannot tell a client that fetched from one that reused a cached
-            # build — and that question has cost several round trips of reading package
-            # caches to answer. This fingerprints the view's own bytes, so it changes
-            # whenever the form does.
-            "view_build": form.build_id(),
-        }
-
+    account_registered = False
     trade_audit = None
 
-    def arm_trading(armed: config_mod.Config, armed_client: DeltaClient) -> None:
-        """Register the mutating tools, with the audit log that has to accompany them."""
+    def surface() -> str:
+        names = ["market"]
+        if account_registered:
+            names.append("account")
+        if trade_audit is not None or live.mode == "trade":
+            names.append("trade")
+        return "+".join(names)
+
+    def announce_transition(reason: str) -> None:
+        audit = str(trade_audit.path) if trade_audit else "off"
+        print(
+            f"[delta-exchange-mcp] runtime transition={reason} env={live.env} "
+            f"mode={live.mode} surface={surface()} audit={audit}",
+            file=sys.stderr,
+        )
+
+    def arm_trading(armed: config_mod.Config) -> None:
+        """Register mutations against the same rebindable client as every other tool."""
         nonlocal trade_audit, live
+        client.rebind(armed)
         trade_audit = audit_log.configure(armed)
-        trading.register(mcp, armed_client, trade_audit)
+        trading.register(mcp, client, trade_audit)
         live = armed
 
         @mcp.tool()
@@ -194,37 +157,151 @@ def build_server(cfg: config_mod.Config | None = None) -> FastMCP:
                 "audit_log_path": str(trade_audit.path) if trade_audit else None,
             }
 
+    def disarm_trading() -> None:
+        """Remove mutations before credentials, environment, or entitlement can move."""
+        nonlocal trade_audit, live
+        for name in (*trading.TOOL_NAMES, "get_trading_status"):
+            mcp.remove_tool(name)
+        trade_audit = None
+        live = replace(live, mode="read")
+        client.rebind(live)
+
+    def http_identity(config: config_mod.Config) -> tuple[str, str | None, str | None]:
+        """The secret-bearing comparison stays internal and is never returned by a tool."""
+        return config.env, config.api_key, config.api_secret
+
+    def restart_required(next_config: config_mod.Config) -> bool:
+        return (
+            next_config.has_credentials
+            and next_config.mode == "trade"
+            and live.mode != "trade"
+        )
+
+    async def reconcile(
+        session: ServerSession, *, allow_trade: bool, notify: bool
+    ) -> config_mod.Config:
+        """Move every live surface to one coherent next configuration.
+
+        Read surfaces can move immediately. Trading is removed before an identity change and
+        can only be armed by the first tools/list of a new session, never by the form save
+        that requested it.
+        """
+        nonlocal account_registered, live
+        client_name = _session_client_name(session)
+        loaded = config_mod.load()
+        next_config = replace(loaded, mode=config_mod.mode_for_client(client_name))
+        identity_changed = http_identity(live) != http_identity(next_config)
+        tools_changed = False
+        transitions: list[str] = []
+
+        if live.mode == "trade" and (identity_changed or next_config.mode != "trade"):
+            transitions.append(
+                "trade-disarmed-identity-change"
+                if identity_changed
+                else "trade-disarmed-read-mode"
+            )
+            disarm_trading()
+            tools_changed = True
+
+        if identity_changed:
+            client.rebind(replace(next_config, mode="read"))
+            transitions.append("identity-rebound")
+
+        if account_registered and not next_config.has_credentials:
+            for name in account.TOOL_NAMES:
+                mcp.remove_tool(name)
+            account_registered = False
+            tools_changed = True
+            transitions.append("account-disarmed")
+        elif not account_registered and next_config.has_credentials:
+            account.register(mcp, client)
+            account_registered = True
+            tools_changed = True
+            transitions.append("account-armed")
+
+        if (
+            allow_trade
+            and next_config.has_credentials
+            and next_config.mode == "trade"
+            and live.mode != "trade"
+        ):
+            arm_trading(next_config)
+            tools_changed = True
+            transitions.append("trade-armed")
+        else:
+            runtime_mode = "trade" if live.mode == "trade" else "read"
+            live = replace(next_config, mode=runtime_mode)
+            client.rebind(live)
+
+        if transitions:
+            announce_transition("+".join(transitions))
+        if notify and tools_changed:
+            await session.send_tool_list_changed()
+        return next_config
+
+    if cfg.has_credentials:
+        account.register(mcp, client)
+        account_registered = True
     if cfg.has_credentials and cfg.mode == "trade":
-        arm_trading(cfg, client)
+        arm_trading(cfg)
 
-    # A trading mode chosen in the form is stored under the choosing client's own name,
-    # and a client only says who it is during the handshake — after this function has
-    # finished building the tool list. So the first `tools/list` of a session is where a
-    # scoped entitlement gets applied, before the list is produced, which puts the
-    # mutating tools in that very first listing rather than behind a later notification.
-    #
-    # Decided once per session on purpose. Choosing trade mid-conversation writes the key
-    # but must not arm order placement in the session that wrote it: that still waits for
-    # the restart, which is the deliberate act this whole gate exists to require.
-    entitlement_checked = False
-    list_tools = mcp._mcp_server.request_handlers[types.ListToolsRequest]
+    # Retain the session object rather than its integer id. Python may reuse an id after a
+    # connection closes; carrying that integer forward could make a later session skip its
+    # own entitlement check. Stdio has one live session, so this set remains trivially small.
+    entitlement_checked: set[ServerSession] = set()
 
-    async def arm_before_listing(req: types.ListToolsRequest) -> types.ServerResult:
-        nonlocal entitlement_checked
-        if not entitlement_checked:
-            entitlement_checked = True
-            name = connected_client_name(mcp)
-            if (
-                name
-                and trade_audit is None
-                and live.has_credentials
-                and config_mod.mode_for_client(name) == "trade"
-            ):
-                armed = replace(live, mode="trade")
-                arm_trading(armed, DeltaClient(armed))
-        return await list_tools(req)
+    async def activate(session: ServerSession) -> form.Activation:
+        """Hot-apply safe form changes and report whether account reads are live."""
+        # A form save must never become the event that arms trading. Mark the decision made
+        # even for a protocol peer that called the opener directly before its first list.
+        entitlement_checked.add(session)
+        await reconcile(session, allow_trade=False, notify=True)
+        return form.Activation(account_ready=account_registered, mode=live.mode)
 
-    mcp._mcp_server.request_handlers[types.ListToolsRequest] = arm_before_listing
+    # Registered whether or not credentials are set: someone with none needs to add a
+    # first key, and someone with one still rotates it, switches environment, or changes mode.
+    form.register(mcp, activate)
+
+    @mcp.tool()
+    async def get_connection_status(ctx: Context) -> dict[str, object]:
+        """Whether an API key is configured, where it points, and if a restart is due.
+
+        Reconciles safe external file changes before answering and returns no key, secret,
+        or credential fingerprint.
+        """
+        session = ctx.session
+        client_name = _session_client_name(session)
+        next_config = await reconcile(session, allow_trade=False, notify=True)
+        overridden = credentials.overridden_by_client(client_name)
+        binding = config_mod.mode_key(client_name)
+        return {
+            "environment": live.env,
+            "credentials_configured": next_config.has_credentials,
+            "account_tools_available": account_registered,
+            "mode": live.mode,
+            "mode_after_restart": next_config.mode,
+            # A restart cannot help while the client supplies a conflicting value on every
+            # launch; those settings must be changed in the client's own MCP configuration.
+            "restart_required": not overridden and restart_required(next_config),
+            "overridden_by_client": overridden,
+            "client_name": client_name,
+            "mode_setting": binding,
+            "client_identity": "self-reported name; convenience scope, not authentication",
+            "version": PACKAGE_VERSION,
+            "view_build": form.build_id(),
+        }
+
+    # A client identifies itself only during the handshake. Apply its scoped entitlement
+    # before the first tools/list, via FastMCP's public list_tools override rather than by
+    # replacing the SDK's private request handler table. It is checked once per session so
+    # choosing trade through the form cannot arm mutations in that same session later.
+    async def apply_session_entitlement(session: ServerSession) -> None:
+        if session in entitlement_checked:
+            return
+        await reconcile(session, allow_trade=True, notify=False)
+        entitlement_checked.add(session)
+
+    mcp.before_list_tools(apply_session_entitlement)
 
     if log_path is not None:
 
@@ -255,10 +332,14 @@ def initialization_options(mcp: FastMCP) -> InitializationOptions:
 
 async def serve(mcp: FastMCP) -> None:
     """Serve over stdio, the only transport."""
-    async with stdio_server() as (read_stream, write_stream):
-        await mcp._mcp_server.run(
-            read_stream, write_stream, initialization_options(mcp)
-        )
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await mcp._mcp_server.run(
+                read_stream, write_stream, initialization_options(mcp)
+            )
+    finally:
+        if isinstance(mcp, DeltaMCP):
+            await mcp.close_live_client()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -306,7 +387,7 @@ def main(argv: list[str] | None = None) -> None:
     if trade_on:
         surface += "+trade"
     banner = (
-        f"[delta-exchange-mcp] stdio env={cfg.env} base_url={cfg.base_url} "
+        f"[delta-exchange-mcp] startup stdio env={cfg.env} base_url={cfg.base_url} "
         f"mode={cfg.mode} surface={surface}"
     )
     if cfg.config_file is not None:

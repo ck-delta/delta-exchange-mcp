@@ -1,5 +1,6 @@
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -20,12 +21,18 @@ def server():
 
 async def opened(mcp):
     """A server whose form has been opened, which is the precondition for saving."""
-    await mcp.call_tool("setup_credentials", {})
+    result = await mcp.call_tool("setup_credentials", {})
+    mcp._test_save_grant = result.meta["ui"]["saveGrant"]
     return mcp
 
 
 async def save(mcp, **overrides):
-    args = {"environment": "india_testnet", "api_key": KEY, "api_secret": SECRET}
+    args = {
+        "environment": "india_testnet",
+        "api_key": KEY,
+        "api_secret": SECRET,
+        "grant": getattr(mcp, "_test_save_grant", ""),
+    }
     args.update(overrides)
     content, structured = await mcp.call_tool("save_credentials", args)
     return structured, "".join(getattr(block, "text", "") for block in content)
@@ -56,10 +63,11 @@ async def test_the_view_is_declared_as_an_app_rather_than_a_document(server):
     assert resource.mimeType == "text/html;profile=mcp-app"
 
 
-async def test_the_saving_tool_is_hidden_from_the_model(server):
-    """The model must not be able to call it, and must not see credential-shaped arguments."""
-    tool = next(t for t in await server.list_tools() if t.name == "save_credentials")
-    assert tool.meta["ui"]["visibility"] == ["app"]
+async def test_the_saving_tools_are_hidden_from_the_model(server):
+    """The model must not be able to call either mutation behind the form."""
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    assert tools["save_credentials"].meta["ui"]["visibility"] == ["app"]
+    assert tools["save_mode"].meta["ui"]["visibility"] == ["app"]
 
 
 async def test_the_form_is_available_without_credentials(server):
@@ -118,6 +126,13 @@ def test_the_view_reads_the_host_context_it_asked_for():
     """
     assert "hostContext" in form.VIEW_HTML
     assert "ui/notifications/host-context-changed" in form.VIEW_HTML
+
+
+def test_the_view_restores_the_live_environment_and_can_save_mode_without_a_key():
+    """Reopening must not default to prod or require resubmitting the stored secret."""
+    assert "selectEnv(now.environment)" in form.VIEW_HTML
+    assert "currentEnvironment = now.environment" in form.VIEW_HTML
+    assert 'name: modeOnly ? "save_mode" : "save_credentials"' in form.VIEW_HTML
 
 
 async def test_the_resource_says_who_draws_the_box(server):
@@ -189,6 +204,49 @@ async def test_saving_is_refused_until_the_form_has_been_opened(server):
     assert config_mod.load().has_credentials is False
 
 
+async def test_the_save_grant_is_metadata_only(server):
+    """The one-use capability reaches the app but never the model-visible result."""
+    result = await server.call_tool("setup_credentials", {})
+    grant = result.meta["ui"]["saveGrant"]
+    visible = json.dumps(
+        {
+            "content": [block.model_dump(mode="json") for block in result.content],
+            "structuredContent": result.structuredContent,
+        }
+    )
+    assert grant
+    assert grant not in visible
+
+
+async def test_a_wrong_grant_does_not_consume_the_real_one(server, monkeypatch):
+    monkeypatch.setattr(credentials, "check", checking(ok=True, reachable=True, detail=""))
+    await opened(server)
+    refused, _ = await save(server, grant="not-the-issued-grant")
+    assert refused["status"] == "refused"
+
+    accepted, _ = await save(server)
+    assert accepted["status"] == "saved"
+
+
+async def test_a_successful_save_consumes_its_grant(server, monkeypatch):
+    monkeypatch.setattr(credentials, "check", checking(ok=True, reachable=True, detail=""))
+    await opened(server)
+    accepted, _ = await save(server)
+    replayed, _ = await save(server)
+    assert accepted["status"] == "saved"
+    assert replayed["status"] == "refused"
+
+
+async def test_an_expired_grant_is_refused(server, monkeypatch):
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(form, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    await opened(server)
+    clock.now += 601
+
+    structured, _ = await save(server)
+    assert structured["status"] == "refused"
+
+
 async def test_a_key_delta_rejects_is_not_saved(server, monkeypatch):
     monkeypatch.setattr(
         credentials,
@@ -255,7 +313,9 @@ async def test_a_clean_save_reports_its_facts_as_fields_not_only_as_a_sentence(
     assert structured["path"] == str(store.path())
     # This fixture registers the form with no `activate`, which is the branch that still
     # needs a restart; `test_activation.py` covers the one that does not.
-    assert structured["next_step"] == "Restart this client to use your account."
+    assert structured["next_step"] == (
+        "Restart this client to use your account. Trading stays off for this client."
+    )
     assert "someone@delta.exchange" in structured["message"]
 
     blob = json.dumps(structured)
@@ -291,8 +351,8 @@ async def test_the_credentials_never_appear_in_anything_the_tool_returns(server,
 
 async def test_opening_the_form_reveals_nothing_and_offers_a_fallback(server):
     """The result is model-visible, so it must carry instructions and no secret."""
-    content, _ = await server.call_tool("setup_credentials", {})
-    text = "".join(getattr(block, "text", "") for block in content)
+    result = await server.call_tool("setup_credentials", {})
+    text = "".join(getattr(block, "text", "") for block in result.content)
     assert str(store.path()) in text
     assert "delta-exchange-mcp login" in text
     # The one instruction that matters: a model asked for help with a key will otherwise

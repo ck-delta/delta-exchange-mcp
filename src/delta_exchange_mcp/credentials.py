@@ -7,13 +7,14 @@ saving and both write the same three keys, so neither owns that; this does.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import httpx
 
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
-from delta_exchange_mcp.config import BASE_URLS, Config, load, mode_key
+from delta_exchange_mcp.config import BASE_URLS, DEFAULT_MODE, Config, load, mode_key
 from delta_exchange_mcp.errors import DeltaApiError
 
 
@@ -36,7 +37,7 @@ class Check:
     ip: str = ""
 
 
-def overridden_by_client() -> list[str]:
+def overridden_by_client(client: str = "") -> list[str]:
     """Which settings in the shared file the process environment is overriding.
 
     `config` resolves the process environment before the file, so a client that passes its
@@ -59,11 +60,17 @@ def overridden_by_client() -> list[str]:
         "DELTA_API_KEY": live.api_key,
         "DELTA_API_SECRET": live.api_secret,
     }
-    return [
+    overridden = [
         name
         for name, in_use in effective.items()
         if (saved := (stored.get(name) or "").strip()) and saved != in_use
     ]
+    if client and (scoped := mode_key(client)):
+        saved_mode = (stored.get(scoped) or "").strip().lower() or DEFAULT_MODE
+        process_mode = (os.environ.get("DELTA_MCP_MODE") or "").strip().lower()
+        if process_mode and process_mode != saved_mode:
+            overridden.append("DELTA_MCP_MODE")
+    return overridden
 
 
 async def check(env: str, key: str, secret: str) -> Check:
@@ -113,3 +120,11 @@ def save(env: str, key: str, secret: str, client: str = "", mode: str = "") -> s
         if scoped:
             values[scoped] = mode
     return store.write(values)
+
+
+def save_mode(client: str, mode: str) -> str | None:
+    """Change only one client's scoped mode, without reading or rewriting credentials."""
+    scoped = mode_key(client)
+    if not scoped:
+        return "this client did not provide a usable name for a scoped mode"
+    return store.write({scoped: mode})

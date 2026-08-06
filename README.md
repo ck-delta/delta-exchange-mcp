@@ -131,9 +131,10 @@ always used together.
 
 ### Trading (opt-in)
 
-The flag is checked at startup, so the tools are absent from the tool list entirely rather
-than present and refusing — an assistant that never sees them cannot be talked into using
-them.
+The flag is checked before the first tool list of a session, so the tools are absent from
+that list entirely rather than present and refusing — an assistant that never sees them
+cannot be talked into using them. Turning trading off removes those tools immediately;
+turning it on still requires a new session.
 
 > [!WARNING]
 > What trade mode will **not** do: cap notional or position size, ask you to confirm before
@@ -159,9 +160,11 @@ This is the one setting that is never read from the shared file described in
 [Add your API key](#add-your-api-key) under its own name. Everything else there is
 convenience; this one places real orders, so it is always tied to one client rather than
 arming every assistant on the machine at once. The form does not change that — it writes
-`DELTA_MCP_MODE_<CLIENT>`, keyed on the name the client gives during its handshake, and
-that key is read only by the client it names. `DELTA_MCP_MODE` in a client's own config
-still wins over it.
+`DELTA_MCP_MODE_<READABLE>_<DIGEST>`, keyed on the exact name the client gives during its
+handshake, and that key is read only by a client reporting that exact name. The readable
+part is just a label; the digest keeps punctuation variants from collapsing onto one key.
+This is convenience scoping, not authentication — a client can claim the same name.
+`DELTA_MCP_MODE` in a client's own config still wins over it.
 
 Safety features:
 
@@ -228,12 +231,13 @@ DELTA_API_SECRET=your-secret-here
 DELTA_MCP_ENV=india_prod
 ```
 
-The terminal and by-hand routes need your MCP client restarted afterwards, because the
-server reads this file when it starts. The in-chat form usually doesn't: it saves into the
-process your client is already talking to, registers the account tools there, and tells the
-client its tool list changed — so they become usable in the same conversation. It says which
-happened when it saves, and asks for a restart in the two cases that need one: replacing a
-key already in use, and enabling trade mode.
+The terminal and by-hand routes normally need your MCP client restarted afterwards; asking
+for the connection status can also make a running server reconcile safe external changes.
+The in-chat form usually needs neither: it atomically moves market and account calls to the
+saved environment and key, registers the account tools there, and tells the client its tool
+list changed — so first-time setup, environment changes, and key rotation become usable in
+the same conversation. Enabling trade mode still needs a new session. Turning it off takes
+effect immediately.
 
 If your client has its own place to put credentials — the Claude Desktop bundle's form, VS
 Code's prompts, the Codex desktop app's fields — those still work and take precedence over
@@ -263,7 +267,7 @@ through to the file.
 | `DELTA_MCP_ENV` | `india_prod` | yes | `india_prod`, `india_testnet`, or `india_devnet`. |
 | `DELTA_API_KEY` | _(unset)_ | yes | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
 | `DELTA_API_SECRET` | _(unset)_ | yes | API secret matching `DELTA_API_KEY`. |
-| `DELTA_MCP_MODE` | `read` | **no** | `trade` registers the trading tools (requires API key + secret). Per client on purpose — see [Trading](#trading-opt-in). The credential form writes a per-client `DELTA_MCP_MODE_<CLIENT>` into the shared file instead; this name still wins over it. |
+| `DELTA_MCP_MODE` | `read` | **no** | `trade` registers the trading tools (requires API key + secret). Per client on purpose — see [Trading](#trading-opt-in). The credential form writes a per-client `DELTA_MCP_MODE_<READABLE>_<DIGEST>` into the shared file instead; this name still wins over it. |
 | `DELTA_MCP_DEBUG` | _(unset)_ | yes | `1`/`true`/`yes`/`on` writes HTTP request URLs and response bodies to a log file (see [Debugging](#debugging--reporting-a-bug)). |
 | `DELTA_MCP_DEBUG_FILE` | _(auto)_ | yes | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
 | `DELTA_MCP_AUDIT` | _(on in trade mode)_ | yes | Set `off`/`false`/`0`/`no` to disable the trading audit log. On by default whenever `DELTA_MCP_MODE=trade`. |

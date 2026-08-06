@@ -21,6 +21,24 @@ from delta_exchange_mcp.errors import DeltaApiError
 
 logger = logging.getLogger("delta_exchange_mcp")
 
+TOOL_NAMES = frozenset(
+    {
+        "place_order",
+        "edit_order",
+        "cancel_order",
+        "cancel_all_orders",
+        "place_batch_orders",
+        "edit_batch_orders",
+        "cancel_batch_orders",
+        "place_bracket_order",
+        "edit_bracket_order",
+        "set_product_leverage",
+        "adjust_position_margin",
+        "close_all_positions",
+        "configure_auto_topup",
+    }
+)
+
 _MAX_BATCH = 50
 _STOP_TRIGGER_METHODS = "mark_price, last_traded_price, spot_price"
 
