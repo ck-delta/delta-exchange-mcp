@@ -116,8 +116,10 @@ curl -sIL -o /dev/null -w '%{http_code}\n' \
 
 Expect two asset names — `delta-exchange-mcp-<version>.mcpb` and the unversioned
 `delta-exchange-mcp.mcpb` alias — and `200` from the curl. The alias exists so that
-`/releases/latest/download/` has a name that does not change between releases; without it
-that URL 404s, which is why the README badge points at the releases page instead.
+`/releases/latest/download/` has a name that does not change between releases, and the README
+badge points directly at it. The Bundle workflow's `attach` job uploads the alias only after
+the release is published, so the direct link can briefly return 404 while that job runs. Wait
+for the attach job and this curl to succeed before announcing the release.
 
 ## Rolling back a bad release
 

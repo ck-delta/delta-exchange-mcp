@@ -144,7 +144,7 @@ async def tool_entries() -> list[dict[str, str]]:
     * Debug, which registers `get_debug_status`. Nothing in the manifest declares
       DELTA_MCP_DEBUG, and the manifest env is applied *over* the user's environment, so an
       exported DELTA_MCP_DEBUG=1 reaches an installed bundle untouched — measured: 28 tools
-      registered against 41 declared, with `get_debug_status` among neither.
+      registered against 41 declared, with `get_debug_status` registered but undeclared.
 
     Declaring DELTA_MCP_DEBUG="" in the manifest would also stop that, but it would take
     away the only way a bundle user can turn debug logging on at all — and that log is how
@@ -174,9 +174,15 @@ async def tool_entries() -> list[dict[str, str]]:
             # of them came from.
             "DELTA_MCP_AUDIT": "off",
         })
+        from delta_exchange_mcp import debug_log
         from delta_exchange_mcp.server import build_server
 
-        tools = await build_server().list_tools()
+        try:
+            tools = await build_server().list_tools()
+        finally:
+            # Debug is intentionally on for manifest introspection. Its FileHandler points
+            # inside scratch and must be closed before TemporaryDirectory removes it.
+            debug_log.shutdown()
 
     return [
         {
