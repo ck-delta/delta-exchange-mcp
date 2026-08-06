@@ -123,12 +123,33 @@ async def test_an_in_flight_request_keeps_one_coherent_state_during_rebind():
     )
     release.set()
     await request
+    assert transport.is_closed
+    assert client._retired == {}
     await client.aclose()
 
     assert seen == {
         "url": f"{INDIA_TESTNET_REST}/wallet/balances",
         "key": "old-key",
     }
+
+
+@pytest.mark.asyncio
+async def test_idle_rebinds_close_retired_transports_promptly():
+    client = DeltaClient(
+        Config(env="india_testnet", base_url=INDIA_TESTNET_REST)
+    )
+
+    for index in range(250):
+        client.rebind(
+            Config(
+                env="india_testnet",
+                base_url=f"https://example-{index}.invalid/v2",
+            )
+        )
+    await asyncio.sleep(0)
+
+    assert client._retired == {}
+    await client.aclose()
 
 
 @pytest.mark.asyncio

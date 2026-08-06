@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -70,21 +70,23 @@ class Config:
         return bool(self.api_key) != bool(self.api_secret)
 
 
-def setting(name: str) -> str | None:
+def setting(name: str, shared: dict[str, str] | None = None) -> str | None:
     """Resolve one setting: the process environment first, then the shared file.
 
     Empty means unanswered rather than answered-with-nothing. A bundle substitutes
     every variable it declares whether or not the user filled that field in, so a
     cleared input arrives as "" — it has to fall through to the file rather than
-    override it, or the shared file could never reach a bundle user at all.
+    override it, or the shared file could never reach a bundle user at all. `shared`
+    lets one caller resolve several settings from the same file snapshot.
     """
     from_env = (os.environ.get(name) or "").strip()
     if from_env:
         return from_env
-    return (store.read().get(name) or "").strip() or None
+    values = store.read() if shared is None else shared
+    return (values.get(name) or "").strip() or None
 
 
-def _credentials() -> tuple[str | None, str | None]:
+def _credentials(shared: dict[str, str]) -> tuple[str | None, str | None]:
     """The API key and its secret, always taken from the same source.
 
     Resolving them independently could pair a leftover DELTA_API_KEY in someone's
@@ -101,7 +103,6 @@ def _credentials() -> tuple[str | None, str | None]:
     secret = (os.environ.get("DELTA_API_SECRET") or "").strip() or None
     if key or secret:
         return key, secret
-    shared = store.read()
     return (
         (shared.get("DELTA_API_KEY") or "").strip() or None,
         (shared.get("DELTA_API_SECRET") or "").strip() or None,
@@ -133,7 +134,7 @@ def mode_key(client: str) -> str:
     return f"{_MODE_PREFIX}{slug}_{digest}"
 
 
-def mode_for_client(client: str) -> Mode:
+def mode_for_client(client: str, shared: dict[str, str] | None = None) -> Mode:
     """The mode a named client may run in.
 
     `DELTA_MCP_MODE` in the process environment still wins, because that is the client's
@@ -151,14 +152,14 @@ def mode_for_client(client: str) -> Mode:
     key = mode_key(client)
     if not key:
         return DEFAULT_MODE  # type: ignore[return-value]
-    saved = (store.read().get(key) or "").strip().lower()
+    values = store.read() if shared is None else shared
+    saved = (values.get(key) or "").strip().lower()
     return saved if saved in MODES else DEFAULT_MODE  # type: ignore[return-value]
 
 
-def load() -> Config:
-    config_file = store.ensure()
-
-    env = (setting("DELTA_MCP_ENV") or DEFAULT_ENV).lower()
+def _load_snapshot(shared: dict[str, str], config_file: Path | None) -> Config:
+    """Resolve one Config from one complete settings-file snapshot."""
+    env = (setting("DELTA_MCP_ENV", shared) or DEFAULT_ENV).lower()
     if env not in BASE_URLS:
         raise ValueError(
             f"DELTA_MCP_ENV must be one of {sorted(BASE_URLS)}, got {env!r}"
@@ -171,14 +172,32 @@ def load() -> Config:
     if mode not in MODES:
         raise ValueError(f"DELTA_MCP_MODE must be one of {sorted(MODES)}, got {mode!r}")
 
-    api_key, api_secret = _credentials()
+    api_key, api_secret = _credentials(shared)
 
     return Config(
         env=env,  # type: ignore[arg-type]
         base_url=BASE_URLS[env],
         api_key=api_key,
         api_secret=api_secret,
-        debug=(setting("DELTA_MCP_DEBUG") or "").lower() in TRUTHY,
+        debug=(setting("DELTA_MCP_DEBUG", shared) or "").lower() in TRUTHY,
         mode=mode,  # type: ignore[arg-type]
         config_file=config_file,
     )
+
+
+def load(shared: dict[str, str] | None = None) -> Config:
+    config_file = store.ensure()
+    # `store.write` replaces a complete file atomically. Read it once so one Config
+    # cannot combine the environment from the old file with credentials from the new.
+    values = store.read() if shared is None else shared
+    return _load_snapshot(values, config_file)
+
+
+def load_for_client(
+    client: str, shared: dict[str, str] | None = None
+) -> Config:
+    """Resolve HTTP identity and this client's entitlement from one file snapshot."""
+    config_file = store.ensure()
+    values = store.read() if shared is None else shared
+    loaded = _load_snapshot(values, config_file)
+    return replace(loaded, mode=mode_for_client(client, values))

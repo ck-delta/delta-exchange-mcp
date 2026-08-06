@@ -23,9 +23,17 @@ import os
 import shutil
 import stat
 import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import dotenv_values, set_key
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 DEFAULT_DIR = Path.home() / ".delta-exchange-mcp"
 DEFAULT_NAME = "config.env"
@@ -52,7 +60,8 @@ DELTA_MCP_ENV=india_prod
 # Trading is stored per client, never under the shared name below, so switching it
 # on in one place cannot arm every assistant on this machine at once. The in-chat
 # form writes the scoped name for you; the client name comes from its handshake.
-# DELTA_MCP_MODE_CLAUDE_DESKTOP=trade
+# Ask get_connection_status for this client's exact mode_setting, or use the form.
+# DELTA_MCP_MODE_<READABLE>_<DIGEST>=trade
 #
 # This unscoped name is read only from a client's own environment, never from here:
 # DELTA_MCP_MODE=trade
@@ -111,6 +120,56 @@ def ensure() -> Path | None:
     return target
 
 
+_LOCK_TIMEOUT_SECONDS = 10.0
+_LOCK_POLL_SECONDS = 0.05
+
+
+@contextmanager
+def _write_lock(target: Path) -> Iterator[None]:
+    """Serialize copy-modify-replace writers across processes.
+
+    The hidden lock file contains no settings and stays beside the config deliberately.
+    Removing a lock path after release is unsafe: a waiter may still hold the old inode
+    while a third process creates and locks a new one. The kernel releases the advisory
+    lock automatically if a writer crashes, so no stale-lock deletion is needed.
+    """
+    lock_path = target.with_name(f".{target.name}.lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+    locked = False
+    try:
+        if os.name == "nt":
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+            while not locked:
+                os.lseek(fd, 0, os.SEEK_SET)
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    locked = True
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"timed out waiting for {lock_path}") from exc
+                    time.sleep(_LOCK_POLL_SECONDS)
+        else:
+            while not locked:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"timed out waiting for {lock_path}") from exc
+                    time.sleep(_LOCK_POLL_SECONDS)
+        yield
+    finally:
+        if locked:
+            if os.name == "nt":
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def write(values: dict[str, str]) -> str | None:
     """Set all of `values` in the shared file at once, or leave the file as it was.
 
@@ -130,29 +189,28 @@ def write(values: dict[str, str]) -> str | None:
     if target is None:
         return f"cannot write {path()}"
 
-    # SHORTCUT: last writer wins. Two clients saving at the same moment each stage a
-    # complete credential, so neither can publish a mixed pair, but the earlier save is
-    # overwritten rather than merged. Upgrading that means a lock file beside the config
-    # with stale-lock recovery, which is more machinery than a once-per-setup write earns.
     staged = None
     try:
-        # Owner bits are carried across, group and other are dropped. A write is the one
-        # moment a *new* secret enters this file, and publishing it into a group- or
-        # world-readable file would hand it to every other account on the machine — with
-        # nothing said, because the permission warning only runs at startup. Masking here
-        # rather than forcing 0600 leaves an owner who chose 0400 with the mode they chose.
-        mode = stat.S_IMODE(target.stat().st_mode) & 0o700
-        handle, name = tempfile.mkstemp(dir=target.parent, prefix=".config-", suffix=".tmp")
-        os.close(handle)
-        staged = Path(name)
-        shutil.copyfile(target, staged)
-        for key, value in values.items():
-            written, _, _ = set_key(str(staged), key, value)
-            if not written:
-                return f"could not write {key} to {target}"
-        os.chmod(staged, mode)
-        os.replace(staged, target)
-        staged = None
+        with _write_lock(target):
+            # Owner bits are carried across, group and other are dropped. A write is the one
+            # moment a *new* secret enters this file, and publishing it into a group- or
+            # world-readable file would hand it to every other account on the machine — with
+            # nothing said, because the permission warning only runs at startup. Masking here
+            # rather than forcing 0600 leaves an owner who chose 0400 with the mode they chose.
+            mode = stat.S_IMODE(target.stat().st_mode) & 0o700
+            handle, name = tempfile.mkstemp(
+                dir=target.parent, prefix=".config-", suffix=".tmp"
+            )
+            os.close(handle)
+            staged = Path(name)
+            shutil.copyfile(target, staged)
+            for key, value in values.items():
+                written, _, _ = set_key(str(staged), key, value)
+                if not written:
+                    return f"could not write {key} to {target}"
+            os.chmod(staged, mode)
+            os.replace(staged, target)
+            staged = None
     except OSError as exc:
         # Reported rather than raised because a caller may be a tool answering a form,
         # where an exception becomes a protocol error the person cannot act on.

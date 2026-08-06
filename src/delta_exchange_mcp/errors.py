@@ -35,6 +35,11 @@ _AUTH_HINTS: dict[str, str] = {
     ),
 }
 
+# A response carrying one of these codes proves that the submitted credential pair
+# itself is unusable. Other API failures — especially a rate limit or service outage —
+# only prove that Delta could not verify it at that moment.
+_AUTH_FAILURE_CODES = frozenset(_AUTH_HINTS)
+
 
 def extract_ip(context: Any) -> str | None:
     """The IP Delta says it saw, which is the one thing that makes a whitelist error fixable."""
@@ -68,6 +73,11 @@ class DeltaApiError(Exception):
         if status:
             msg += f" [http {status}]"
         super().__init__(msg)
+
+
+def is_auth_failure(error: DeltaApiError) -> bool:
+    """Whether an API error decisively rejects the submitted credentials."""
+    return error.code in _AUTH_FAILURE_CODES
 
 
 class ConfigError(Exception):

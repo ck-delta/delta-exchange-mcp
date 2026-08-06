@@ -1,5 +1,6 @@
 import os
 import stat
+import threading
 
 import pytest
 
@@ -68,6 +69,76 @@ def test_store_supplies_settings_when_the_environment_is_silent():
     assert cfg.env == "india_testnet"
     assert cfg.base_url == config_mod.INDIA_TESTNET_REST
     assert (cfg.api_key, cfg.api_secret) == ("k", "s")
+
+
+def test_one_load_uses_one_complete_store_snapshot(monkeypatch):
+    """An atomic replacement must not be split across one Config instance."""
+    before = {
+        "DELTA_MCP_ENV": "india_testnet",
+        "DELTA_API_KEY": "before-key",
+        "DELTA_API_SECRET": "before-secret",
+        "DELTA_MCP_DEBUG": "0",
+    }
+    after = {
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "after-key",
+        "DELTA_API_SECRET": "after-secret",
+        "DELTA_MCP_DEBUG": "1",
+    }
+    reads = 0
+
+    def changing_store():
+        nonlocal reads
+        reads += 1
+        return before if reads == 1 else after
+
+    monkeypatch.setattr(store, "read", changing_store)
+
+    cfg = config_mod.load()
+
+    assert reads == 1
+    assert (cfg.env, cfg.api_key, cfg.api_secret, cfg.debug) == (
+        "india_testnet",
+        "before-key",
+        "before-secret",
+        False,
+    )
+
+
+def test_client_entitlement_uses_the_same_snapshot_as_its_identity(monkeypatch):
+    """A concurrent replace cannot pair an old account with a new trade grant."""
+    client = "Claude Desktop"
+    scoped = config_mod.mode_key(client)
+    before = {
+        "DELTA_MCP_ENV": "india_testnet",
+        "DELTA_API_KEY": "before-key",
+        "DELTA_API_SECRET": "before-secret",
+        scoped: "read",
+    }
+    after = {
+        "DELTA_MCP_ENV": "india_prod",
+        "DELTA_API_KEY": "after-key",
+        "DELTA_API_SECRET": "after-secret",
+        scoped: "trade",
+    }
+    reads = 0
+
+    def changing_store():
+        nonlocal reads
+        reads += 1
+        return before if reads == 1 else after
+
+    monkeypatch.setattr(store, "read", changing_store)
+
+    cfg = config_mod.load_for_client(client)
+
+    assert reads == 1
+    assert (cfg.env, cfg.api_key, cfg.api_secret, cfg.mode) == (
+        "india_testnet",
+        "before-key",
+        "before-secret",
+        "read",
+    )
 
 
 def test_client_environment_beats_the_store(monkeypatch):
@@ -203,6 +274,51 @@ def test_write_leaves_settings_it_was_not_given_alone():
     assert cfg.has_credentials is True
 
 
+def test_concurrent_writers_preserve_another_clients_trade_deescalation(monkeypatch):
+    """A disjoint save cannot republish a stale trade grant from its staging copy."""
+    first_mode = config_mod.mode_key("first-client")
+    second_mode = config_mod.mode_key("second-client")
+    write_store(f"{first_mode}=trade\n{second_mode}=read\n")
+
+    first_inside = threading.Event()
+    release_first = threading.Event()
+    second_inside = threading.Event()
+    real_set_key = store.set_key
+
+    def interleaved_set_key(target, key, value, *args, **kwargs):
+        if threading.current_thread().name == "first-writer" and key == first_mode:
+            first_inside.set()
+            assert release_first.wait(2)
+        if threading.current_thread().name == "second-writer":
+            second_inside.set()
+        return real_set_key(target, key, value, *args, **kwargs)
+
+    monkeypatch.setattr(store, "set_key", interleaved_set_key)
+    outcomes: dict[str, str | None] = {}
+
+    first = threading.Thread(
+        target=lambda: outcomes.setdefault("first", store.write({first_mode: "read"})),
+        name="first-writer",
+    )
+    second = threading.Thread(
+        target=lambda: outcomes.setdefault("second", store.write({second_mode: "trade"})),
+        name="second-writer",
+    )
+
+    first.start()
+    assert first_inside.wait(2)
+    second.start()
+    assert not second_inside.wait(0.1)
+    release_first.set()
+    first.join(2)
+    second.join(2)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert outcomes == {"first": None, "second": None}
+    assert store.read()[first_mode] == "read"
+    assert store.read()[second_mode] == "trade"
+
+
 @pytest.mark.parametrize(
     "value",
     ["has spaces", "quotes'and\"more", "hash#inside", "newline\ninjected", "DELTA_MCP_MODE=trade"],
@@ -248,7 +364,10 @@ def test_a_failed_write_leaves_nothing_behind_beside_the_config(monkeypatch):
 
     monkeypatch.setattr(store, "set_key", boom)
     assert store.write({"DELTA_API_KEY": "new"}) is not None
-    assert [entry.name for entry in path.parent.iterdir()] == [path.name]
+    assert {entry.name for entry in path.parent.iterdir()} == {
+        path.name,
+        f".{path.name}.lock",
+    }
 
 
 def test_write_never_publishes_a_secret_into_a_file_others_can_read():

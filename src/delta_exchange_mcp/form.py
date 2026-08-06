@@ -109,10 +109,23 @@ class Activation:
 
     account_ready: bool
     mode: str
+    effective_mode: str
+    expected_current: bool = True
+
+
+@dataclass(frozen=True)
+class ExpectedState:
+    """Secret-bearing write result to compare internally with activation's snapshot."""
+
+    environment: str | None = None
+    api_key: str | None = None
+    api_secret: str | None = None
+    mode_setting: str = ""
+    mode: str | None = None
 
 
 # Given the session to notify on, brings the live surface up to date after a form save.
-Activate = Callable[[ServerSession], Awaitable[Activation]]
+Activate = Callable[[ServerSession, ExpectedState], Awaitable[Activation]]
 
 _GRANT_TTL_SECONDS = 10 * 60
 
@@ -577,13 +590,16 @@ _TEMPLATE = """<!DOCTYPE html>
     }, 120000).then(function (result) {
       var payload = readResult(result);
       var status = payload.status || "failed";
-      // These three all wrote the key and differ only in what there is to say about it.
-      // Anything else did not, so the fields stay as typed and the button comes back.
-      var stored = status === "saved" || status === "unverified" || status === "overridden";
-      if (stored) {
+      // A superseded save was immediately replaced by another client, but the sensitive
+      // fields still must be cleared: this process handled them and the grant is consumed.
+      var handled = status === "saved" || status === "unverified"
+        || status === "overridden" || status === "superseded";
+      if (handled) {
         saveGrant = "";
-        configured = true;
-        currentEnvironment = chosenEnv();
+        if (status !== "superseded") {
+          configured = true;
+          currentEnvironment = chosenEnv();
+        }
         // Do not leave a secret sitting in a rendered field once it is stored.
         keyEl.value = "";
         secretEl.value = "";
@@ -605,7 +621,7 @@ _TEMPLATE = """<!DOCTYPE html>
         say("");
         return;
       }
-      say(payload.message || status, stored ? "" : "err");
+      say(payload.message || status, handled && status !== "superseded" ? "" : "err");
     }).catch(function (err) {
       saving = false;
       refreshSaveState();
@@ -1016,12 +1032,23 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
                 "message": _override_message(overridden),
             }
 
-        live_state = (
-            await activate(ctx.session)
-            if activate is not None
-            else Activation(account_ready=False, mode="read")
+        expected = ExpectedState(
+            environment=env,
+            api_key=key,
+            api_secret=secret,
+            mode_setting=mode_key(client),
+            mode=wanted if mode_key(client) else None,
         )
-        effective = mode_for_client(client)
+        live_state = (
+            await activate(ctx.session, expected)
+            if activate is not None
+            else Activation(
+                account_ready=False,
+                mode="read",
+                effective_mode=mode_for_client(client),
+            )
+        )
+        effective = live_state.effective_mode
         follow_up = next_step(
             client,
             effective,
@@ -1035,6 +1062,16 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
             "client_name": client,
             "mode_setting": mode_key(client),
         }
+        if not live_state.expected_current:
+            return common | {
+                "status": "superseded",
+                "message": (
+                    "Another client changed the shared Delta settings after this key was "
+                    "checked and saved. This session follows those newer settings, so it "
+                    "is not claiming the checked account is connected. Reopen the form if "
+                    "you want to replace them."
+                ),
+            }
         if overridden:
             return common | {
                 "status": "overridden",
@@ -1102,17 +1139,22 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
             return {"status": "failed", "message": problem}
         finish_grant(grant_key, pending, used=True)
 
+        expected = ExpectedState(mode_setting=binding, mode=wanted)
         live_state = (
-            await activate(ctx.session)
+            await activate(ctx.session, expected)
             if activate is not None
-            else Activation(account_ready=False, mode="read")
+            else Activation(
+                account_ready=False,
+                mode="read",
+                effective_mode=mode_for_client(client),
+            )
         )
         overridden = [
             name
             for name in credentials.overridden_by_client(client)
             if name == "DELTA_MCP_MODE"
         ]
-        effective = mode_for_client(client)
+        effective = live_state.effective_mode
         follow_up = next_step(
             client, effective, live_state, mode_overridden=bool(overridden)
         )
@@ -1124,6 +1166,15 @@ def register(mcp: FastMCP, activate: Activate | None = None) -> None:
             "client_name": client,
             "mode_setting": binding,
         }
+        if not live_state.expected_current:
+            return common | {
+                "status": "superseded",
+                "message": (
+                    "Another client changed this access-mode setting before it could be "
+                    "activated. This session follows the newer setting; reopen the form "
+                    "if you still want to change it."
+                ),
+            }
         if overridden:
             return common | {
                 "status": "overridden",

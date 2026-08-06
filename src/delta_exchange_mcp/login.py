@@ -22,9 +22,9 @@ from delta_exchange_mcp import credentials, store
 from delta_exchange_mcp.config import BASE_URLS, DASHBOARDS, DEFAULT_ENV
 
 
-def _ask_env() -> str | None:
-    prompt = f"Environment {'/'.join(sorted(BASE_URLS))}\n  [{DEFAULT_ENV}]: "
-    answer = input(prompt).strip().lower() or DEFAULT_ENV
+def _ask_env(default: str = DEFAULT_ENV) -> str | None:
+    prompt = f"Environment {'/'.join(sorted(BASE_URLS))}\n  [{default}]: "
+    answer = input(prompt).strip().lower() or default
     if answer not in BASE_URLS:
         print(f"  not an environment: {answer}", file=sys.stderr)
         return None
@@ -46,28 +46,67 @@ def run(verify: bool = True) -> int:
         print(f"cannot write {store.path()}", file=sys.stderr)
         return 1
 
+    shared = store.read()
+    saved_env_value = (shared.get("DELTA_MCP_ENV") or "").strip().lower()
+    saved_env = saved_env_value if saved_env_value in BASE_URLS else None
+    default_env = saved_env or DEFAULT_ENV
+    saved_key = (shared.get("DELTA_API_KEY") or "").strip()
+    saved_secret = (shared.get("DELTA_API_SECRET") or "").strip()
+    has_saved_pair = bool(saved_key and saved_secret)
+    can_keep_saved = has_saved_pair and saved_env is not None
+
     print(f"Storing credentials in {path}")
-    print("Every MCP client on this machine reads it. Leave blank to keep what is there.\n")
+    print("Every MCP client on this machine reads it.")
+    if can_keep_saved:
+        print("Press Enter to keep the environment and saved credential pair.\n")
+    else:
+        print("Choose an environment and enter both parts of a credential pair.\n")
 
     try:
-        env = _ask_env()
+        env = _ask_env(default_env)
         if env is None:
             return 1
         print(f"  create a key at {DASHBOARDS.get(env, DASHBOARDS[DEFAULT_ENV])}")
         print('  the "Read Data" permission is enough unless you intend to trade\n')
-        key = getpass.getpass("API key (hidden): ").strip()
-        secret = getpass.getpass("API secret (hidden): ").strip()
+        keep = "; Enter keeps saved" if can_keep_saved else ""
+        entered_key = getpass.getpass(f"API key (hidden{keep}): ").strip()
+        entered_secret = getpass.getpass(f"API secret (hidden{keep}): ").strip()
     except (KeyboardInterrupt, EOFError):
         print("\ncancelled, nothing written", file=sys.stderr)
         return 1
 
-    if not key or not secret:
+    if bool(entered_key) != bool(entered_secret):
         print(
-            "both a key and its secret are needed — one without the other leaves the "
-            "server on market data only",
+            "both a key and its secret are needed. Enter both to replace the saved "
+            "pair, or leave both blank to keep it.",
             file=sys.stderr,
         )
         return 1
+
+    if entered_key:
+        key, secret = entered_key, entered_secret
+    elif not has_saved_pair:
+        print(
+            "No complete credential pair is saved. Enter both the API key and secret.",
+            file=sys.stderr,
+        )
+        return 1
+    elif saved_env is None:
+        print(
+            "The saved credential pair has no valid environment. Choose an environment "
+            "and enter a new API key and secret.",
+            file=sys.stderr,
+        )
+        return 1
+    elif env != saved_env:
+        print(
+            f"The saved credentials belong to {saved_env}; changing environments "
+            "requires a new API key and secret.",
+            file=sys.stderr,
+        )
+        return 1
+    else:
+        key, secret = saved_key, saved_secret
 
     if verify:
         print(f"\nChecking against {BASE_URLS[env]} ...")

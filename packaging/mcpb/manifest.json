@@ -220,6 +220,10 @@
       "description": "Save a key typed into the credential form. Called by the form, not by you."
     },
     {
+      "name": "save_mode",
+      "description": "Change this client's access mode without reading or resubmitting its key."
+    },
+    {
       "name": "set_product_leverage",
       "description": "Set order leverage for a product."
     },

@@ -15,7 +15,7 @@ import httpx
 from delta_exchange_mcp import store
 from delta_exchange_mcp.client import DeltaClient
 from delta_exchange_mcp.config import BASE_URLS, DEFAULT_MODE, Config, load, mode_key
-from delta_exchange_mcp.errors import DeltaApiError
+from delta_exchange_mcp.errors import DeltaApiError, is_auth_failure
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,9 @@ class Check:
     ip: str = ""
 
 
-def overridden_by_client(client: str = "") -> list[str]:
+def overridden_by_client(
+    client: str = "", shared: dict[str, str] | None = None
+) -> list[str]:
     """Which settings in the shared file the process environment is overriding.
 
     `config` resolves the process environment before the file, so a client that passes its
@@ -53,8 +55,8 @@ def overridden_by_client(client: str = "") -> list[str]:
     everyone — so that test would tell every Cursor user their working key was ignored.
     A file with nothing in it is not being overridden either.
     """
-    stored = store.read()
-    live = load()
+    stored = store.read() if shared is None else shared
+    live = load(stored)
     effective = {
         "DELTA_MCP_ENV": live.env,
         "DELTA_API_KEY": live.api_key,
@@ -86,7 +88,11 @@ async def check(env: str, key: str, secret: str) -> Check:
         profile = await client.get("/profile", auth=True)
     except DeltaApiError as exc:
         return Check(
-            ok=False, reachable=True, detail=str(exc), code=exc.code, ip=exc.ip or ""
+            ok=False,
+            reachable=is_auth_failure(exc),
+            detail=str(exc),
+            code=exc.code,
+            ip=exc.ip or "",
         )
     except httpx.HTTPError as exc:
         return Check(ok=False, reachable=False, detail=f"could not reach Delta: {exc}")

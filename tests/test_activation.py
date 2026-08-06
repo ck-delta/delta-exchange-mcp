@@ -402,6 +402,32 @@ async def test_mode_only_save_does_not_read_or_rewrite_the_stored_credentials():
     assert after[config_mod.mode_key("Claude Desktop")] == "trade"
 
 
+async def test_another_session_cannot_call_a_globally_registered_trade_tool(monkeypatch):
+    """The process registry is shared, so authorization also runs at tools/call."""
+    monkeypatch.setenv("DELTA_MCP_AUDIT", "off")
+    credentialled(mode_for="Trader")
+    app = server.build_server(config_mod.load())
+    try:
+        async with connected(client_name="Trader", mcp=app) as trader:
+            assert "place_order" in await trader.tool_names()
+
+        # Deliberately skip tools/list. MCP permits a direct tools/call, and the trading
+        # function remains in FastMCP's process-global registry from the prior session.
+        async with connected(client_name="Reader", mcp=app) as reader:
+            result = await reader.raw_call(
+                "place_order",
+                product_id=27,
+                size=1,
+                side="buy",
+                order_type="market_order",
+                dry_run=True,
+            )
+            assert result.isError is True
+            assert "not enabled for this MCP session" in result.content[0].text
+    finally:
+        await app.close_live_client()
+
+
 async def test_mode_only_read_disarms_live_trading_immediately(capsys):
     """The safe direction takes effect now and leaves an explicit runtime transition."""
     credentialled(mode_for="Claude Desktop")
@@ -482,6 +508,40 @@ async def test_process_mode_override_is_reported_with_the_effective_mode(
         assert "Restart this app to turn trading on" not in result["message"]
         assert "get_positions" in await session.tool_names()
         assert "place_order" not in await session.tool_names()
+        status = await session.call("get_connection_status")
+        assert status["restart_required"] is True
+        assert status["overridden_by_client"] == ["DELTA_MCP_MODE"]
+
+
+async def test_a_concurrent_full_save_is_reported_as_superseded(accepted, monkeypatch):
+    """Never claim checked account A is live after another process publishes account B."""
+    real_save = credentials.save
+
+    def save_then_supersede(env, key, secret, client="", mode=""):
+        problem = real_save(env, key, secret, client, mode)
+        assert problem is None
+        assert (
+            store.write(
+                {
+                    "DELTA_MCP_ENV": "india_prod",
+                    "DELTA_API_KEY": "newer-client-key",
+                    "DELTA_API_SECRET": "newer-client-secret",
+                }
+            )
+            is None
+        )
+        return None
+
+    monkeypatch.setattr(credentials, "save", save_then_supersede)
+    async with connected(client_name="Claude Desktop") as session:
+        result = await save(session)
+
+        assert result["status"] == "superseded"
+        assert "someone@delta.exchange" not in result["message"]
+        assert "newer settings" in result["message"]
+        status = await session.call("get_connection_status")
+        assert status["environment"] == "india_prod"
+        assert session.server.live_client.config.api_key == "newer-client-key"
 
 
 async def test_punctuation_variants_do_not_inherit_each_others_trading_choice():

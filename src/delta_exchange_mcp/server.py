@@ -40,9 +40,10 @@ on this machine reads. That file is created with instructions in it on first run
 so an API key is set once rather than pasted into each client's own config.
 DELTA_MCP_MODE is the exception. That name is never read from the shared file, because a
 value there would arm order placement in every client on the machine at once. Trading is
-stored per client instead, under DELTA_MCP_MODE_<CLIENT> keyed on the name the client
-gives in the handshake — which is what the in-chat form writes, and what the first
-tools/list of a session applies.
+stored per client instead, under DELTA_MCP_MODE_<READABLE>_<DIGEST> keyed on the exact
+name the client gives in the handshake — which is what the in-chat form writes, and what
+the first tools/list of a session applies. This is convenience scope, not authenticated
+client identity.
 
 Prod and testnet API keys are separate; DELTA_MCP_ENV must match the dashboard the
 key was created on. The server speaks MCP over stdio and is normally launched by a
@@ -121,6 +122,7 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
 
     account_registered = False
     trade_audit = None
+    trade_gate: trading.TradeGate | None = None
 
     def surface() -> str:
         names = ["market"]
@@ -138,12 +140,17 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
             file=sys.stderr,
         )
 
-    def arm_trading(armed: config_mod.Config) -> None:
+    def arm_trading(
+        armed: config_mod.Config, session: ServerSession | None = None
+    ) -> None:
         """Register mutations against the same rebindable client as every other tool."""
-        nonlocal trade_audit, live
+        nonlocal trade_audit, trade_gate, live
         client.rebind(armed)
         trade_audit = audit_log.configure(armed)
-        trading.register(mcp, client, trade_audit)
+        trade_gate = trading.TradeGate()
+        if session is not None:
+            trade_gate.bind(session)
+        trading.register(mcp, client, trade_audit, trade_gate)
         live = armed
 
         @mcp.tool()
@@ -159,10 +166,13 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
 
     def disarm_trading() -> None:
         """Remove mutations before credentials, environment, or entitlement can move."""
-        nonlocal trade_audit, live
+        nonlocal trade_audit, trade_gate, live
+        if trade_gate is not None:
+            trade_gate.revoke()
         for name in (*trading.TOOL_NAMES, "get_trading_status"):
             mcp.remove_tool(name)
         trade_audit = None
+        trade_gate = None
         live = replace(live, mode="read")
         client.rebind(live)
 
@@ -179,7 +189,7 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
 
     async def reconcile(
         session: ServerSession, *, allow_trade: bool, notify: bool
-    ) -> config_mod.Config:
+    ) -> tuple[config_mod.Config, dict[str, str]]:
         """Move every live surface to one coherent next configuration.
 
         Read surfaces can move immediately. Trading is removed before an identity change and
@@ -188,8 +198,8 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
         """
         nonlocal account_registered, live
         client_name = _session_client_name(session)
-        loaded = config_mod.load()
-        next_config = replace(loaded, mode=config_mod.mode_for_client(client_name))
+        shared = store.read()
+        next_config = config_mod.load_for_client(client_name, shared)
         identity_changed = http_identity(live) != http_identity(next_config)
         tools_changed = False
         transitions: list[str] = []
@@ -225,9 +235,17 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
             and next_config.mode == "trade"
             and live.mode != "trade"
         ):
-            arm_trading(next_config)
+            arm_trading(next_config, session)
             tools_changed = True
             transitions.append("trade-armed")
+        elif (
+            allow_trade
+            and next_config.has_credentials
+            and next_config.mode == "trade"
+            and live.mode == "trade"
+            and trade_gate is not None
+        ):
+            trade_gate.bind(session)
         else:
             runtime_mode = "trade" if live.mode == "trade" else "read"
             live = replace(next_config, mode=runtime_mode)
@@ -237,7 +255,7 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
             announce_transition("+".join(transitions))
         if notify and tools_changed:
             await session.send_tool_list_changed()
-        return next_config
+        return next_config, shared
 
     if cfg.has_credentials:
         account.register(mcp, client)
@@ -250,13 +268,32 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
     # own entitlement check. Stdio has one live session, so this set remains trivially small.
     entitlement_checked: set[ServerSession] = set()
 
-    async def activate(session: ServerSession) -> form.Activation:
+    async def activate(
+        session: ServerSession, expected: form.ExpectedState
+    ) -> form.Activation:
         """Hot-apply safe form changes and report whether account reads are live."""
         # A form save must never become the event that arms trading. Mark the decision made
         # even for a protocol peer that called the opener directly before its first list.
         entitlement_checked.add(session)
-        await reconcile(session, allow_trade=False, notify=True)
-        return form.Activation(account_ready=account_registered, mode=live.mode)
+        next_config, shared = await reconcile(session, allow_trade=False, notify=True)
+        identity_current = (
+            expected.environment is None
+            or (
+                (shared.get("DELTA_MCP_ENV") or "").strip() == expected.environment
+                and (shared.get("DELTA_API_KEY") or "").strip() == expected.api_key
+                and (shared.get("DELTA_API_SECRET") or "").strip() == expected.api_secret
+            )
+        )
+        mode_current = (
+            not expected.mode_setting
+            or (shared.get(expected.mode_setting) or "").strip().lower() == expected.mode
+        )
+        return form.Activation(
+            account_ready=account_registered,
+            mode=live.mode,
+            effective_mode=next_config.mode,
+            expected_current=identity_current and mode_current,
+        )
 
     # Registered whether or not credentials are set: someone with none needs to add a
     # first key, and someone with one still rotates it, switches environment, or changes mode.
@@ -271,8 +308,8 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
         """
         session = ctx.session
         client_name = _session_client_name(session)
-        next_config = await reconcile(session, allow_trade=False, notify=True)
-        overridden = credentials.overridden_by_client(client_name)
+        next_config, shared = await reconcile(session, allow_trade=False, notify=True)
+        overridden = credentials.overridden_by_client(client_name, shared)
         binding = config_mod.mode_key(client_name)
         return {
             "environment": live.env,
@@ -280,9 +317,13 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
             "account_tools_available": account_registered,
             "mode": live.mode,
             "mode_after_restart": next_config.mode,
-            # A restart cannot help while the client supplies a conflicting value on every
-            # launch; those settings must be changed in the client's own MCP configuration.
-            "restart_required": not overridden and restart_required(next_config),
+            # Credential/environment overrides cannot be repaired by restarting. A mode
+            # override is different: if it says trade, restart is exactly what will arm it,
+            # so retain that warning while also naming the override below.
+            "restart_required": not (
+                set(overridden) - {"DELTA_MCP_MODE"}
+            )
+            and restart_required(next_config),
             "overridden_by_client": overridden,
             "client_name": client_name,
             "mode_setting": binding,
