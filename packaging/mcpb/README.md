@@ -52,6 +52,8 @@ until all of this passes:
 - two real MCP **handshakes** against a fresh unpack — `initialize`, then `tools/list`
 - **the form decides the mode, not the environment**: accepting the declared default
   registers no mutation tool even when the ambient environment says `DELTA_MCP_MODE=trade`
+- **mutations identify themselves**: every trading tool carries the namespaced
+  `_meta["delta.exchange/mutating"]` marker, so the verifier does not infer safety from names
 - **the opt-in works**: `trade` reaches all 13 mutation tools, so the field is not decorative
 - **nothing undeclared**: every tool the server registers appears in the manifest, which is
   what `tools_generated: false` promises

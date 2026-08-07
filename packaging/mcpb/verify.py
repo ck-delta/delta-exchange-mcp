@@ -19,15 +19,7 @@ import time
 import zipfile
 from pathlib import Path
 
-MUTATION_PREFIXES = (
-    "place_",
-    "cancel_",
-    "edit_",
-    "close_",
-    "adjust_",
-    "set_product",
-    "configure_",
-)
+MUTATING_TOOL_META_KEY = "delta.exchange/mutating"
 
 
 def check_archive(mcpb: Path) -> None:
@@ -135,8 +127,8 @@ def _pump(stream, put) -> None:
 
 def handshake(
     extracted: Path, env: dict[str, str] | None = None, timeout: float = 240.0
-) -> list[str]:
-    """Start the unpacked server over stdio and return the tool names it registers."""
+) -> dict[str, dict]:
+    """Start the unpacked server over stdio and return the tools it registers by name."""
     proc = subprocess.Popen(
         ["uv", "run", "--directory", str(extracted), "--frozen", "python", "server/main.py"],
         stdin=subprocess.PIPE,
@@ -217,7 +209,16 @@ def handshake(
 
     info = seen[1]["result"].get("serverInfo", {})
     print(f"  handshake: initialize OK, serverInfo={info}")
-    return sorted(t["name"] for t in seen[2]["result"]["tools"])
+    return {tool["name"]: tool for tool in seen[2]["result"]["tools"]}
+
+
+def mutation_names(tools: dict[str, dict]) -> list[str]:
+    """Return tools whose registration explicitly identifies them as mutating."""
+    return sorted(
+        name
+        for name, tool in tools.items()
+        if tool.get("_meta", {}).get(MUTATING_TOOL_META_KEY) is True
+    )
 
 
 def main() -> None:
@@ -236,7 +237,7 @@ def main() -> None:
         default = handshake(
             tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"], tmp)
         )
-        leaked = [n for n in default if n.startswith(MUTATION_PREFIXES)]
+        leaked = mutation_names(default)
         print(f"  default mode: {len(default)} tools, {len(leaked)} mutating")
         if leaked:
             raise SystemExit(
@@ -248,7 +249,7 @@ def main() -> None:
 
         # And the opt-in has to actually reach trading, or the field is decorative.
         opted = handshake(tmp, launch_env(manifest, "trade", tmp))
-        mutating = [n for n in opted if n.startswith(MUTATION_PREFIXES)]
+        mutating = mutation_names(opted)
         print(f"  mode=trade:   {len(opted)} tools, {len(mutating)} mutating")
         if not mutating:
             raise SystemExit("opting into trade registered no mutation tools")
