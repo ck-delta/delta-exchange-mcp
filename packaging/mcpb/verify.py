@@ -19,15 +19,7 @@ import time
 import zipfile
 from pathlib import Path
 
-MUTATION_PREFIXES = (
-    "place_",
-    "cancel_",
-    "edit_",
-    "close_",
-    "adjust_",
-    "set_product",
-    "configure_",
-)
+MUTATING_TOOL_META_KEY = "delta.exchange/mutating"
 
 
 def check_archive(mcpb: Path) -> None:
@@ -77,7 +69,7 @@ def check_archive(mcpb: Path) -> None:
     print(f"  payload: {', '.join(sorted(required))}, {wheels.pop()}")
 
 
-def launch_env(manifest: dict, mode: str) -> dict[str, str]:
+def launch_env(manifest: dict, mode: str, workdir: Path) -> dict[str, str]:
     """The environment a host would build, over a deliberately hostile one.
 
     The ambient half sets DELTA_MCP_MODE=trade and supplies credentials, which is what a
@@ -85,6 +77,17 @@ def launch_env(manifest: dict, mode: str) -> dict[str, str]:
     ${user_config.x} resolved the way the host resolves it. Checking the result is what
     makes "the form decides the mode, not the environment" an actual test rather than an
     assertion that passes because no credentials were present.
+
+    DELTA_MCP_DEBUG is in the ambient half and *not* declared by the manifest, which is the
+    point: the manifest env is applied over the user's environment, so an undeclared variable
+    reaches the server untouched and registers `get_debug_status`. Left out of here, the
+    undeclared-tool check in `main` could only ever pass, because CI's own shell has no such
+    variable. With it, that check is what proves the declared list is a real ceiling.
+
+    Turning debug on means the server writes a log, and trade mode with credentials opens an
+    audit log, so both are pointed at `workdir` — the throwaway unpack. Left at their
+    defaults, every build dropped two debug logs and an audit file into the developer's
+    ~/.delta-exchange-mcp, which is not somewhere a build should be writing at all.
     """
     config = {k: v.get("default", "") for k, v in manifest["user_config"].items()}
     config.update({"mode": mode, "api_key": "placeholder", "api_secret": "placeholder"})
@@ -94,6 +97,9 @@ def launch_env(manifest: dict, mode: str) -> dict[str, str]:
         "DELTA_MCP_MODE": "trade",
         "DELTA_API_KEY": "ambient",
         "DELTA_API_SECRET": "ambient",
+        "DELTA_MCP_DEBUG": "1",
+        "DELTA_MCP_DEBUG_FILE": str(workdir / "debug.log"),
+        "DELTA_MCP_AUDIT_FILE": str(workdir / "audit.log"),
     })
     for key, raw in manifest["server"]["mcp_config"]["env"].items():
         env[key] = re.sub(
@@ -121,8 +127,8 @@ def _pump(stream, put) -> None:
 
 def handshake(
     extracted: Path, env: dict[str, str] | None = None, timeout: float = 240.0
-) -> list[str]:
-    """Start the unpacked server over stdio and return the tool names it registers."""
+) -> dict[str, dict]:
+    """Start the unpacked server over stdio and return the tools it registers by name."""
     proc = subprocess.Popen(
         ["uv", "run", "--directory", str(extracted), "--frozen", "python", "server/main.py"],
         stdin=subprocess.PIPE,
@@ -203,7 +209,16 @@ def handshake(
 
     info = seen[1]["result"].get("serverInfo", {})
     print(f"  handshake: initialize OK, serverInfo={info}")
-    return sorted(t["name"] for t in seen[2]["result"]["tools"])
+    return {tool["name"]: tool for tool in seen[2]["result"]["tools"]}
+
+
+def mutation_names(tools: dict[str, dict]) -> list[str]:
+    """Return tools whose registration explicitly identifies them as mutating."""
+    return sorted(
+        name
+        for name, tool in tools.items()
+        if tool.get("_meta", {}).get(MUTATING_TOOL_META_KEY) is True
+    )
 
 
 def main() -> None:
@@ -219,8 +234,10 @@ def main() -> None:
 
         # Someone who accepted the form's defaults, on a machine whose environment is
         # already asking for trade mode. The declared default has to win.
-        default = handshake(tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"]))
-        leaked = [n for n in default if n.startswith(MUTATION_PREFIXES)]
+        default = handshake(
+            tmp, launch_env(manifest, manifest["user_config"]["mode"]["default"], tmp)
+        )
+        leaked = mutation_names(default)
         print(f"  default mode: {len(default)} tools, {len(leaked)} mutating")
         if leaked:
             raise SystemExit(
@@ -231,15 +248,18 @@ def main() -> None:
             raise SystemExit("no tools registered")
 
         # And the opt-in has to actually reach trading, or the field is decorative.
-        opted = handshake(tmp, launch_env(manifest, "trade"))
-        mutating = [n for n in opted if n.startswith(MUTATION_PREFIXES)]
+        opted = handshake(tmp, launch_env(manifest, "trade", tmp))
+        mutating = mutation_names(opted)
         print(f"  mode=trade:   {len(opted)} tools, {len(mutating)} mutating")
         if not mutating:
             raise SystemExit("opting into trade registered no mutation tools")
 
         # tools_generated is false, which promises the manifest lists everything reachable.
+        # Both runs, not just the trade one: an undeclared tool that a variable in the user's
+        # own environment switches on appears in the default install too, and that is the
+        # install almost everyone has.
         declared = {t["name"] for t in manifest["tools"]}
-        undeclared = set(opted) - declared
+        undeclared = (set(default) | set(opted)) - declared
         if undeclared:
             raise SystemExit(
                 "manifest declares tools_generated=false but the server registers "

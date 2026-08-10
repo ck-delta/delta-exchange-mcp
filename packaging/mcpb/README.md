@@ -52,17 +52,21 @@ until all of this passes:
 - two real MCP **handshakes** against a fresh unpack — `initialize`, then `tools/list`
 - **the form decides the mode, not the environment**: accepting the declared default
   registers no mutation tool even when the ambient environment says `DELTA_MCP_MODE=trade`
+- **mutations identify themselves**: every trading tool carries the namespaced
+  `_meta["delta.exchange/mutating"]` marker, so the verifier does not infer safety from names
 - **the opt-in works**: `trade` reaches all 13 mutation tools, so the field is not decorative
 - **nothing undeclared**: every tool the server registers appears in the manifest, which is
   what `tools_generated: false` promises
 
-Both handshakes start from a deliberately hostile environment — `DELTA_MCP_MODE=trade` and
-credentials exported — and then apply the manifest's `env` over it with `${user_config.x}`
-resolved the way a host resolves it. That is what makes the first check meaningful. An earlier
-version simply launched the server with no credentials and asserted zero mutations, which
-passed because mutation tools are gated on credentials *and* trade mode: it could not have
-failed. Confirm any change here still fails when `DELTA_MCP_MODE` is removed from the
-manifest's `env`, which is the bug the check exists to catch.
+Both handshakes start from a deliberately hostile environment — `DELTA_MCP_MODE=trade`,
+credentials and `DELTA_MCP_DEBUG=1` exported — and then apply the manifest's `env` over it with
+`${user_config.x}` resolved the way a host resolves it. Debug and audit output are redirected
+into the throwaway unpack so a build never writes to `~/.delta-exchange-mcp`. That is what makes
+the mode and undeclared-tool checks meaningful. An earlier version simply launched the server
+with no credentials and asserted zero mutations, which passed because mutation tools are gated
+on credentials *and* trade mode: it could not have failed. Confirm any change here still fails
+when `DELTA_MCP_MODE` is removed from the manifest's `env`, which is the bug the check exists to
+catch.
 
 ## The icon
 
@@ -91,10 +95,12 @@ start.
 ## Decisions
 
 **Trading is present but opt-in.** `DELTA_MCP_MODE` is a `user_config` field defaulting to
-`read`, substituted into the launch environment as `${user_config.mode}`. Someone who accepts
-the form gets 27 tools and no mutations; someone who types `trade` gets 41 and can place real
-orders. `user_config` has no enum type — only string, number, boolean, directory and file —
-so this is a free-text string, the same shape as the `environment` field beside it.
+`read`, substituted into the launch environment as `${user_config.mode}`. With credentials and
+debug off, `read` gets 27 tools and no mutations; `trade` gets 41 and can place real orders.
+The verifier intentionally enables debug and therefore sees 28 and 42 respectively, with
+`get_debug_status` as the extra declared tool. `user_config` has no enum type — only string,
+number, boolean, directory and file — so this is a free-text string, the same shape as the
+`environment` field beside it.
 
 Declaring the variable matters as much as its default. Leaving it out of the manifest entirely
 would let an ambient `DELTA_MCP_MODE=trade` in the environment the app was launched with reach

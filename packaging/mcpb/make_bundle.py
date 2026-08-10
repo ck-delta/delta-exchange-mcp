@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 import tomllib
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -131,32 +132,58 @@ async def tool_entries() -> list[dict[str, str]]:
 
     Every DELTA_ variable is cleared before the ones that matter are set, so the manifest
     depends only on the source being packaged and never on the shell the build ran in.
-    Forcing a named few was not enough. A developer with DELTA_MCP_DEBUG=1 exported got
-    `get_debug_status` written into the manifest — 42 tools instead of 41 — and CI, whose
-    shell has no such variable, then rejects that manifest as stale. DELTA_MCP_ENV leaked
-    the same way, where an invalid value in the shell failed the build inside `load()`.
+    Forcing a named few was not enough: a developer with DELTA_MCP_DEBUG=1 exported got a
+    different manifest than CI produced, and CI then rejected it as stale. DELTA_MCP_ENV
+    leaked the same way, where an invalid value in the shell failed the build inside `load()`.
 
-    Trade mode is forced because the declared list has to be the *superset*. `tools_generated`
-    is false, which promises the runtime never exposes anything beyond this list, and a user
-    who sets Mode to trade reaches all of it. Listing only the read surface would break that
-    promise the moment someone opted in.
+    Every optional surface is then forced ON, because the declared list has to be the
+    *superset*. `tools_generated` is false, which promises the runtime never exposes anything
+    beyond this list, so anything a user can switch on has to already be in it:
+
+    * Trade mode, reached through the install form's Mode field.
+    * Debug, which registers `get_debug_status`. Nothing in the manifest declares
+      DELTA_MCP_DEBUG, and the manifest env is applied *over* the user's environment, so an
+      exported DELTA_MCP_DEBUG=1 reaches an installed bundle untouched — measured: 28 tools
+      registered against 41 declared, with `get_debug_status` registered but undeclared.
+
+    Declaring DELTA_MCP_DEBUG="" in the manifest would also stop that, but it would take
+    away the only way a bundle user can turn debug logging on at all — and that log is how
+    they capture wire-level evidence for a bug report, since a bundle has no config file to
+    edit. Listing the tool costs nothing by comparison: `tools_generated: false` promises a
+    ceiling, not an exact set, which is already how the 13 mutating tools are handled.
     """
     for name in [name for name in os.environ if name.startswith("DELTA_")]:
         del os.environ[name]
-    os.environ.update({
-        "DELTA_MCP_MODE": "trade",
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "placeholder",
-        "DELTA_API_SECRET": "placeholder",
-        # Trade mode plus credentials is what opens the audit log, and listing tool names
-        # mutates nothing worth auditing. Left on, every manifest build dropped another
-        # empty file into ~/.delta-exchange-mcp/audit/, which is where 4,493 of them
-        # came from.
-        "DELTA_MCP_AUDIT": "off",
-    })
-    from delta_exchange_mcp.server import build_server
 
-    tools = await build_server().list_tools()
+    # Scratch directory rather than a bare mkdtemp, because turning debug on means the
+    # server opens a log file and nothing here wants to keep it. A bare mkdtemp is not
+    # removed by anyone, so every build would leave a directory and a log behind for the
+    # operating system to reap eventually — trading files left in the home directory for
+    # files left in /tmp, which is not the fix it looks like.
+    with tempfile.TemporaryDirectory(prefix="mcpb-manifest-") as scratch:
+        os.environ.update({
+            "DELTA_MCP_MODE": "trade",
+            "DELTA_MCP_ENV": "india_prod",
+            "DELTA_MCP_DEBUG": "1",
+            "DELTA_MCP_DEBUG_FILE": str(pathlib.Path(scratch) / "debug.log"),
+            "DELTA_API_KEY": "placeholder",
+            "DELTA_API_SECRET": "placeholder",
+            # Trade mode plus credentials is what opens the audit log, and listing tool
+            # names mutates nothing worth auditing. Left on, every manifest build dropped
+            # another empty file into ~/.delta-exchange-mcp/audit/, which is where 4,493
+            # of them came from.
+            "DELTA_MCP_AUDIT": "off",
+        })
+        from delta_exchange_mcp import debug_log
+        from delta_exchange_mcp.server import build_server
+
+        try:
+            tools = await build_server().list_tools()
+        finally:
+            # Debug is intentionally on for manifest introspection. Its FileHandler points
+            # inside scratch and must be closed before TemporaryDirectory removes it.
+            debug_log.shutdown()
+
     return [
         {
             "name": t.name,
