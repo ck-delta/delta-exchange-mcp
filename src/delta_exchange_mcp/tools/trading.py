@@ -23,6 +23,8 @@ logger = logging.getLogger("delta_exchange_mcp")
 
 _MAX_BATCH = 50
 _STOP_TRIGGER_METHODS = "mark_price, last_traded_price, spot_price"
+MUTATING_TOOL_META_KEY = "delta.exchange/mutating"
+_MUTATING_TOOL_META = {MUTATING_TOOL_META_KEY: True}
 
 
 def _bs(value: bool | None) -> str | None:
@@ -130,6 +132,7 @@ def _round_to_tick(price: str, tick: Decimal) -> tuple[str, bool]:
 
 
 def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -> None:
+    mutation_tool = mcp.tool(meta=_MUTATING_TOOL_META)
     _uid_cache: dict[str, int] = {}
     # tick_size keyed by both product id (int) and symbol (str); filled lazily.
     _tick_cache: dict[int | str, Decimal] = {}
@@ -237,7 +240,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
 
     # ---------------------------------------------------------------- single order
 
-    @mcp.tool()
+    @mutation_tool
     async def place_order(
         size: int = Field(description="Order size in contracts."),
         side: str = Field(description="buy or sell."),
@@ -309,7 +312,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         result = await _finish("place_order", "POST", "/orders", payload, dry_run=dry_run)
         return _attach(result, adjustments)
 
-    @mcp.tool()
+    @mutation_tool
     async def edit_order(
         id: int = Field(description="Order id to edit."),
         size: int = Field(description="Total size after the edit."),
@@ -342,7 +345,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         result = await _finish("edit_order", "PUT", "/orders", payload, dry_run=dry_run)
         return _attach(result, adjustments)
 
-    @mcp.tool()
+    @mutation_tool
     async def cancel_order(
         product_id: int = Field(description="Product id the order belongs to."),
         id: int | None = Field(default=None, description="Order id to cancel."),
@@ -355,7 +358,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         payload = {"product_id": product_id, "id": id, "client_order_id": client_order_id}
         return await _finish("cancel_order", "DELETE", "/orders", payload, dry_run=dry_run)
 
-    @mcp.tool()
+    @mutation_tool
     async def cancel_all_orders(
         product_id: int | None = Field(default=None, description="Limit to one product."),
         contract_types: list[str] | None = Field(
@@ -398,7 +401,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
             raise ValueError(f"batch size {len(orders)} exceeds max {_MAX_BATCH}")
         return [_clean(o) for o in orders]
 
-    @mcp.tool()
+    @mutation_tool
     async def place_batch_orders(
         orders: list[dict[str, Any]] = Field(
             description="Up to 50 orders, each {size, side, order_type, limit_price?, "
@@ -431,7 +434,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         result = await _finish("place_batch_orders", "POST", "/orders/batch", payload, dry_run=dry_run)
         return _flag_partial(result, cleaned)
 
-    @mcp.tool()
+    @mutation_tool
     async def edit_batch_orders(
         orders: list[dict[str, Any]] = Field(
             description="Up to 50 edits, each {id, size, order_type, limit_price?, post_only?}."
@@ -453,7 +456,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         result = await _finish("edit_batch_orders", "PUT", "/orders/batch", payload, dry_run=dry_run)
         return _flag_partial(result, cleaned)
 
-    @mcp.tool()
+    @mutation_tool
     async def cancel_batch_orders(
         orders: list[dict[str, Any]] = Field(
             description="Up to 50 orders to cancel, each {id} or {client_order_id}."
@@ -475,7 +478,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
 
     # ---------------------------------------------------------------- bracket orders
 
-    @mcp.tool()
+    @mutation_tool
     async def place_bracket_order(
         product_id: int | None = Field(default=None, description="Product id (or pass product_symbol)."),
         product_symbol: str | None = Field(default=None, description="e.g. BTCUSD (or pass product_id)."),
@@ -519,7 +522,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         result = await _finish("place_bracket_order", "POST", "/orders/bracket", payload, dry_run=dry_run)
         return _attach(result, adjustments)
 
-    @mcp.tool()
+    @mutation_tool
     async def edit_bracket_order(
         id: int = Field(description="Order id whose bracket params to update."),
         product_id: int | None = Field(default=None, description="Product id (or pass product_symbol)."),
@@ -564,7 +567,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
 
     # ---------------------------------------------------------------- positions & leverage
 
-    @mcp.tool()
+    @mutation_tool
     async def set_product_leverage(
         product_id: int = Field(description="Product id to set order leverage for."),
         leverage: str = Field(description="Leverage multiplier, e.g. '10'."),
@@ -576,7 +579,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
             f"/products/{product_id}/orders/leverage", {"leverage": leverage}, dry_run=dry_run,
         )
 
-    @mcp.tool()
+    @mutation_tool
     async def adjust_position_margin(
         product_id: int = Field(description="Product id of the position."),
         delta_margin: str = Field(description="Margin to add (positive) or remove (negative), e.g. '5.0'."),
@@ -588,7 +591,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
             "adjust_position_margin", "POST", "/positions/change_margin", payload, dry_run=dry_run
         )
 
-    @mcp.tool()
+    @mutation_tool
     async def close_all_positions(
         close_all_portfolio: bool = Field(default=False, description="Close cross/portfolio-margined positions."),
         close_all_isolated: bool = Field(default=False, description="Close isolated-margin positions."),
@@ -609,7 +612,7 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
         }
         return await _finish("close_all_positions", "POST", "/positions/close_all", payload, dry_run=dry_run)
 
-    @mcp.tool()
+    @mutation_tool
     async def configure_auto_topup(
         product_id: int = Field(description="Product id of the position."),
         auto_topup: bool = Field(description="Enable or disable auto top-up for this position."),
