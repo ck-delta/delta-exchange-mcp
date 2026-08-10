@@ -155,10 +155,9 @@ async def tool_entries() -> list[dict[str, str]]:
     for name in [name for name in os.environ if name.startswith("DELTA_")]:
         del os.environ[name]
 
-    # Scratch directory rather than a bare mkdtemp, because turning debug on means the
-    # server opens a log file and nothing here wants to keep it. A bare mkdtemp is not
-    # removed by anyone, so every build would leave a directory and a log behind for the
-    # operating system to reap eventually — trading files left in the home directory for
+    # One scratch directory for everything the introspection writes, removed on the way out.
+    # A bare mkdtemp is removed by nobody, so every build would leave a directory behind for
+    # the operating system to reap eventually — trading files left in the home directory for
     # files left in /tmp, which is not the fix it looks like.
     with tempfile.TemporaryDirectory(prefix="mcpb-manifest-") as scratch:
         os.environ.update({
@@ -173,6 +172,13 @@ async def tool_entries() -> list[dict[str, str]]:
             # another empty file into ~/.delta-exchange-mcp/audit/, which is where 4,493
             # of them came from.
             "DELTA_MCP_AUDIT": "off",
+            # Clearing the variables above is not enough for this one: cleared, it falls
+            # back to ~/.delta-exchange-mcp/config.env and the build reads the developer's
+            # own settings. Measured: a DELTA_MCP_DEBUG=1 line in that file put
+            # get_debug_status into the manifest by a second route, before this listed it.
+            # It also stops a build creating a file in a home directory it has no business
+            # touching.
+            "DELTA_MCP_CONFIG_FILE": str(pathlib.Path(scratch) / "config.env"),
         })
         from delta_exchange_mcp import debug_log
         from delta_exchange_mcp.server import build_server

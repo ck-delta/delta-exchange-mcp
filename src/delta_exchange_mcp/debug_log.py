@@ -18,7 +18,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from delta_exchange_mcp.config import Config
+from delta_exchange_mcp.config import Config, setting
 from delta_exchange_mcp.version import PACKAGE_VERSION
 
 LOGGER_NAMES = ("delta_exchange_mcp", "httpx")
@@ -28,7 +28,7 @@ _MARKER = "_delta_debug_handler"
 
 
 def _resolve_path() -> Path:
-    override = os.environ.get("DELTA_MCP_DEBUG_FILE")
+    override = setting("DELTA_MCP_DEBUG_FILE")
     if override:
         return Path(override).expanduser()
     stamp = time.strftime("%Y%m%d-%H%M%S")
