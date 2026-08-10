@@ -121,6 +121,9 @@ A client only identifies itself during the handshake, which happens after `build
 `get_connection_status` reports `mode` (live now) and `mode_after_restart` (what this client is entitled to), and folds the difference into `restart_required` — otherwise it would report nothing outstanding while trading was still waiting, which is the contradiction the field exists to prevent.
 
 Conventions in `trading.py`:
+- Register every mutation through the shared `@mutation_tool` decorator. It publishes
+  `_meta["delta.exchange/mutating"] = true`, which the bundle verifier uses instead of
+  inferring safety from tool-name prefixes.
 - Every mutating tool takes `dry_run: bool`. The shared `_finish(tool, method, path, payload, dry_run)` helper strips `None` keys, and when `dry_run` returns `{dry_run, method, path, payload}` **without** any HTTP call; otherwise it sends via `client.post/put/delete` and records to the audit log on both success and `DeltaApiError`.
 - Order-level boolean flags (`post_only`, `reduce_only`, `cancel_*`) are Delta **string enums** — convert with `_bs()` to `"true"`/`"false"`. Position-level flags (`auto_topup`, `close_all_*`) are real JSON booleans.
 - `close_all_positions` needs `user_id`; it is auto-resolved from `/profile` once and cached per-process in the `register` closure — never a tool param.

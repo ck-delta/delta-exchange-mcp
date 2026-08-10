@@ -409,6 +409,23 @@ def test_trade_tools_present_in_trade_mode(monkeypatch):
         assert tool in names
 
 
+@pytest.mark.asyncio
+async def test_all_trading_tools_declare_mutating_metadata():
+    mcp = FastMCP("test")
+    client = _client()
+    try:
+        trading.register(mcp, client)
+        tools = await mcp.list_tools()
+    finally:
+        await client.aclose()
+
+    assert len(tools) == 13
+    assert all(
+        tool.meta == {trading.MUTATING_TOOL_META_KEY: True}
+        for tool in tools
+    )
+
+
 # --------------------------------------------------------------- BUG-1: cancel_all defaults
 
 
