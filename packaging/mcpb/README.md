@@ -94,6 +94,19 @@ start.
 
 ## Decisions
 
+**An empty form field falls through to the shared settings file.** The server reads
+`~/.delta-exchange-mcp/config.env` for anything its environment does not answer, and a
+bundle substitutes every variable it declares whether or not the user filled that field —
+so a blank API-key box arrives as `""`. Empty therefore has to mean "unanswered" rather
+than "answered with nothing", or the shared file could never reach a bundle user at all.
+Someone who has already run `delta-exchange-mcp login` can accept the whole form and still
+get their account.
+
+`verify.py` redirects that file into its throwaway unpack directory. Without it the
+verifier would read the developer's own copy, and a `DELTA_MCP_DEBUG=1` there would
+register a debug tool the manifest does not declare — failing the undeclared-tool check
+locally while passing in CI. It also keeps a build from writing into `$HOME`.
+
 **Trading is present but opt-in.** `DELTA_MCP_MODE` is a `user_config` field defaulting to
 `read`, substituted into the launch environment as `${user_config.mode}`. With credentials and
 debug off, `read` gets 27 tools and no mutations; `trade` gets 41 and can place real orders.

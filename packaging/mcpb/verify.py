@@ -84,10 +84,13 @@ def launch_env(manifest: dict, mode: str, workdir: Path) -> dict[str, str]:
     undeclared-tool check in `main` could only ever pass, because CI's own shell has no such
     variable. With it, that check is what proves the declared list is a real ceiling.
 
-    Turning debug on means the server writes a log, and trade mode with credentials opens an
-    audit log, so both are pointed at `workdir` — the throwaway unpack. Left at their
-    defaults, every build dropped two debug logs and an audit file into the developer's
-    ~/.delta-exchange-mcp, which is not somewhere a build should be writing at all.
+    Everything the server writes is pointed at `workdir`, the throwaway unpack: the debug log
+    that turning debug on creates, the audit log that trade mode with credentials opens, and
+    the shared settings file. That last one is not tidiness — the server reads
+    ~/.delta-exchange-mcp/config.env for anything the manifest does not declare, so a
+    developer with DELTA_MCP_DEBUG=1 in their own file would fail the undeclared-tool check
+    here for a reason CI could never reproduce. Left at their defaults, every build also
+    wrote three files into a home directory a build has no business touching.
     """
     config = {k: v.get("default", "") for k, v in manifest["user_config"].items()}
     config.update({"mode": mode, "api_key": "placeholder", "api_secret": "placeholder"})
@@ -100,6 +103,7 @@ def launch_env(manifest: dict, mode: str, workdir: Path) -> dict[str, str]:
         "DELTA_MCP_DEBUG": "1",
         "DELTA_MCP_DEBUG_FILE": str(workdir / "debug.log"),
         "DELTA_MCP_AUDIT_FILE": str(workdir / "audit.log"),
+        "DELTA_MCP_CONFIG_FILE": str(workdir / "shared-config.env"),
     })
     for key, raw in manifest["server"]["mcp_config"]["env"].items():
         env[key] = re.sub(

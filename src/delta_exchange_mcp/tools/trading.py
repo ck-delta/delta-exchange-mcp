@@ -9,7 +9,11 @@ DeltaClient retry policy) — a timeout is surfaced, not silently re-sent.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -21,10 +25,58 @@ from delta_exchange_mcp.errors import DeltaApiError
 
 logger = logging.getLogger("delta_exchange_mcp")
 
+TOOL_NAMES = frozenset(
+    {
+        "place_order",
+        "edit_order",
+        "cancel_order",
+        "cancel_all_orders",
+        "place_batch_orders",
+        "edit_batch_orders",
+        "cancel_batch_orders",
+        "place_bracket_order",
+        "edit_bracket_order",
+        "set_product_leverage",
+        "adjust_position_margin",
+        "close_all_positions",
+        "configure_auto_topup",
+    }
+)
+
 _MAX_BATCH = 50
 _STOP_TRIGGER_METHODS = "mark_price, last_traded_price, spot_price"
 MUTATING_TOOL_META_KEY = "delta.exchange/mutating"
 _MUTATING_TOOL_META = {MUTATING_TOOL_META_KEY: True}
+_REVOKED_MESSAGE = "trading was disabled while this request was being prepared; no mutation was sent"
+_SESSION_MESSAGE = "trading is not enabled for this MCP session; no mutation was sent"
+
+
+@dataclass
+class TradeGate:
+    """An invalidatable lease for already-dispatched trading tool calls."""
+
+    generation: int = 0
+    armed: bool = True
+    session: object | None = None
+
+    def bind(self, session: object) -> None:
+        if self.session is not None and self.session is not session:
+            self.generation += 1
+        self.session = session
+
+    def lease(self, session: object | None) -> int:
+        if not self.armed:
+            raise RuntimeError(_REVOKED_MESSAGE)
+        if self.session is not None and self.session is not session:
+            raise RuntimeError(_SESSION_MESSAGE)
+        return self.generation
+
+    def revoke(self) -> None:
+        self.armed = False
+        self.generation += 1
+
+    def accepts(self, lease: int | None) -> bool:
+        return self.armed and lease == self.generation
 
 
 def _bs(value: bool | None) -> str | None:
@@ -131,12 +183,41 @@ def _round_to_tick(price: str, tick: Decimal) -> tuple[str, bool]:
     return normalized, normalized != price
 
 
-def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -> None:
-    mutation_tool = mcp.tool(meta=_MUTATING_TOOL_META)
+def register(
+    mcp: FastMCP,
+    client: DeltaClient,
+    audit: AuditLog | None = None,
+    gate: TradeGate | None = None,
+) -> None:
+    gate = gate or TradeGate()
+    active_lease: ContextVar[int | None] = ContextVar(
+        f"delta_trade_lease_{id(gate)}", default=None
+    )
     _uid_cache: dict[str, int] = {}
     # tick_size keyed by both product id (int) and symbol (str); filled lazily.
     _tick_cache: dict[int | str, Decimal] = {}
     _tick_list_loaded = {"done": False}
+
+    def mutation_tool(
+        function: Callable[..., Awaitable[Any]],
+    ) -> Callable[..., Awaitable[Any]]:
+        """Pin every request in one dispatched mutation to the same client state."""
+
+        @wraps(function)
+        async def pinned(*args: Any, **kwargs: Any) -> Any:
+            try:
+                session = mcp.get_context().session
+            except ValueError:
+                session = None
+            lease = gate.lease(session)
+            token = active_lease.set(lease)
+            try:
+                async with client.pin():
+                    return await function(*args, **kwargs)
+            finally:
+                active_lease.reset(token)
+
+        return mcp.tool(meta=_MUTATING_TOOL_META)(pinned)
 
     def _store_product(prod: dict[str, Any]) -> None:
         tick = prod.get("tick_size")
@@ -220,6 +301,10 @@ def register(mcp: FastMCP, client: DeltaClient, audit: AuditLog | None = None) -
             if audit:
                 audit.record(tool, payload, dry_run=True)
             return {"dry_run": True, "method": method, "path": path, "payload": payload}
+        if not gate.accepts(active_lease.get()):
+            if audit:
+                audit.record(tool, payload, error=_REVOKED_MESSAGE)
+            raise RuntimeError(_REVOKED_MESSAGE)
         sender = {"POST": client.post, "PUT": client.put, "DELETE": client.delete}[method]
         try:
             result = await sender(path, payload, auth=True)
