@@ -1,4 +1,4 @@
-# Persona, grade, what-ifs, projections
+# Persona and grade
 
 The interpretive layer. Numbers come from `metrics.md`; this file turns them
 into a verdict.
@@ -127,56 +127,3 @@ change.
 The grade is arithmetic on a fill history. It is not a judgement of skill, and a
 sample under about 30 round trips cannot support one — say so instead of
 grading.
-
-## What-if scenarios
-
-Generate only the ones that improve on reality, sort by improvement, keep the
-top five.
-
-- **Cut the 5 worst trades** — needs more than 5 trades and a losing worst
-  trade. New P&L is the sum excluding the five lowest `net_pnl`.
-- **Stop trading `<worst underlying>`** — the underlying with the most negative
-  total. New P&L is `net_pnl - that underlying's P&L`.
-- **Only trade the top 3 underlyings** — needs more than 3 underlyings. New P&L
-  is the sum over the top 3 by total P&L.
-
-For each: original P&L, new P&L, and
-`improvement_pct = (new - original) / abs(original) * 100`.
-
-These are counterfactuals on a known past, and hindsight selection is exactly
-what makes them flattering. Present them as "where the damage was
-concentrated", never as a strategy.
-
-## Projections
-
-Skip entirely with fewer than 7 days of data or no trades.
-
-```
-days    = number of distinct trading days
-capital = mean(notional_value)          # per round trip
-daily   = pnl / capital / days
-apr     = daily * 365 * 100
-apy_n   = ((1 + daily) ** (365 * n) - 1) * 100
-```
-
-Only project a positive P&L against positive capital; otherwise return nothing.
-
-Compounding a realised daily return over ten years produces enormous numbers
-from a short, lucky sample. If you show these at all, show APR beside them and
-label the whole block an arithmetic extrapolation, not a forecast. Omit them
-when the sample is under 30 trading days.
-
-## Achievements
-
-Optional flavour; skip when the user wants the numbers only.
-
-| Badge | Condition |
-|---|---|
-| First Profit | any day with positive P&L |
-| $1K Club | cumulative P&L crossed 1,000 |
-| $10K Club | cumulative P&L crossed 10,000 |
-| Hot Streak | 5+ consecutive winning days |
-| Century | 100+ round trips |
-| Sharpshooter | win rate ≥ 70% over 50+ trades |
-| Diversified | 10+ underlyings traded |
-| Fee Efficient | maker fill rate > 60% |

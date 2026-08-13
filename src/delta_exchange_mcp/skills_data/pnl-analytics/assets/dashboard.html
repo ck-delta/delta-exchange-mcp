@@ -40,17 +40,15 @@
     "funding":  {"total":0,"paid":0,"received":0,
                  "by_token":[{"token":"BTC","pnl":0,"count":0}, ...],
                  "cumulative":[{"date":"2026-01-04","cumulative":0}, ...]},
-    "expiry":   {"by_type":[{"type":"Weekly","pnl":0,"count":0,"win_rate":0}, ...],
-                 "by_dte":[{"bucket":"0-day","pnl":0,"count":0}, ...]},
+    "pareto":   {"index":2,"total":9,"leaders":["BTC","ETH"]},
     "risk":     [{"label":"Sharpe","value":"1.42","note":"312 daily obs"}, ...],
     "charges":  {"total_fees":0,"maker_fees":0,"taker_fees":0,
-                 "maker_fill_rate":0,"fees_pct_pnl":0,"gst_estimate":0,
+                 "maker_fill_rate":0,"fees_pct_pnl":0,"fees_pct_volume":0,
+                 "gst_estimate":0,"trades_to_cover":"14",
                  "by_token":[{"token":"BTC","fees":0}, ...]},
     "positions":[{"symbol":"BTCUSD","direction":"long","size":10,
                   "notional":540.2,"entry_price":0,"mark_price":0,
-                  "unrealized_pnl":0,"margin":0,"to_liquidation":"12.4%"}, ...],
-    "what_ifs": [{"label":"Cut your 5 worst trades","original_pnl":0,
-                  "new_pnl":0,"improvement_pct":0,"detail":"..."}, ...]
+                  "unrealized_pnl":0,"margin":0,"to_liquidation":"12.4%"}, ...]
   }
 -->
 <style>
@@ -204,7 +202,6 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
   <section class="panel" id="p-pnl"         role="tabpanel" aria-label="P&L"><h2>P&amp;L</h2><div id="c-pnl"></div></section>
   <section class="panel" id="p-instruments" role="tabpanel" aria-label="Instruments"><h2>Instruments</h2><div id="c-instruments"></div></section>
   <section class="panel" id="p-funding"     role="tabpanel" aria-label="Funding"><h2>Funding</h2><div id="c-funding"></div></section>
-  <section class="panel" id="p-expiry"      role="tabpanel" aria-label="Expiry"><h2>Expiry</h2><div id="c-expiry"></div></section>
   <section class="panel" id="p-risk"        role="tabpanel" aria-label="Risk"><h2>Risk</h2><div id="c-risk"></div></section>
   <section class="panel" id="p-charges"     role="tabpanel" aria-label="Charges"><h2>Charges</h2><div id="c-charges"></div></section>
   <section class="panel" id="p-portfolio"   role="tabpanel" aria-label="Portfolio"><h2>Portfolio</h2><div id="c-portfolio"></div></section>
@@ -505,7 +502,10 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
     { label: "Unrealised P&L", value: money(head.unrealized), tone: sign(head.unrealized) },
     { label: "Win rate", value: pct(head.win_rate) },
     { label: "Total fees", value: money(head.total_fees) },
-    { label: "Funding", value: money(head.funding), tone: sign(head.funding) }
+    { label: "Funding", value: money(head.funding), tone: sign(head.funding) },
+    { label: "Net incl. funding", value: money((+head.net_pnl || 0) + (+head.funding || 0)),
+      tone: sign((+head.net_pnl || 0) + (+head.funding || 0)),
+      note: "realised P&L plus funding — what the account actually saw" }
   ].concat((D.overview || []).map(function (s) {
     return { label: s.label, value: s.value, note: s.note, tone: s.tone };
   }));
@@ -566,6 +566,11 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
           ["Capital", "capital", m$], ["Avg return", "avg_return", function (v) { return pct(v, 2); }, s$]
         ])
       : empty("No per-underlying data.")) +
+    (D.pareto && D.pareto.index
+      ? '<p class="empty">80% of the profit came from ' + num(D.pareto.index, 0) +
+        " of " + num(D.pareto.total, 0) + " underlyings" +
+        (arr(D.pareto.leaders) ? ": " + D.pareto.leaders.map(esc).join(", ") : "") + ".</p>"
+      : "") +
     "<h3>Daily P&L correlation</h3>" + matrix(D.correlation, "Correlation matrix") +
     '<p class="empty">Correlation of daily P&amp;L, not of price: it shows whether positions won and lost together.</p>');
 
@@ -584,21 +589,6 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
       ? fig("Funding by underlying", rankChart(fu.by_token, "token", "pnl", "Funding by token", m$))
       : empty("No funding transactions in this window.")));
 
-  var ex = D.expiry || {};
-  set("c-expiry",
-    (arr(ex.by_type) || arr(ex.by_dte))
-      ? (arr(ex.by_type)
-          ? "<h3>By expiry type</h3>" + table(ex.by_type, [
-              ["Type", "type"], ["Trades", "count", function (v) { return num(v, 0); }],
-              ["Net P&L", "pnl", m$, s$], ["Win rate", "win_rate", function (v) { return pct(v); }]
-            ])
-          : "") +
-        (arr(ex.by_dte)
-          ? fig("By days to expiry at entry",
-                rankChart(ex.by_dte, "bucket", "pnl", "P&L by DTE bucket", m$))
-          : "")
-      : empty("No option round trips in this window."));
-
   set("c-risk",
     stats(D.risk) +
     (arr(D.drawdown)
@@ -614,7 +604,10 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
       { label: "Maker fees", value: money(ch.maker_fees) },
       { label: "Taker fees", value: money(ch.taker_fees) },
       { label: "Fees as % of gross P&L", value: pct(ch.fees_pct_pnl) },
-      { label: "GST estimate", value: money(ch.gst_estimate), note: "18% of fees — an estimate, not a tax statement" }
+      { label: "Fees as % of volume", value: pct(ch.fees_pct_volume, 4) },
+      { label: "GST estimate", value: money(ch.gst_estimate), note: "18% of fees — an estimate, not a tax statement" },
+      { label: "Trades to cover fees", value: ch.trades_to_cover !== undefined ? String(ch.trades_to_cover) : "—",
+        note: "average trades at your current edge that pay for this window's fees" }
     ]) +
     (arr(ch.by_token)
       ? fig("Fees by underlying", rankChart(ch.by_token, "token", "fees", "Fees by token", m$))
@@ -628,21 +621,12 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
       ["Mark", "mark_price", function (v) { return num(v); }],
       ["Unrealised", "unrealized_pnl", m$, s$], ["Margin", "margin", m$],
       ["To liquidation", "to_liquidation"]
-    ], "No open positions.") +
-    (arr(D.what_ifs)
-      ? "<h3>What if</h3>" + table(D.what_ifs, [
-          ["Scenario", "label"], ["Actual", "original_pnl", m$, s$],
-          ["Would have been", "new_pnl", m$, s$],
-          ["Change", "improvement_pct", function (v) { return pct(v); }, s$],
-          ["", "detail"]
-        ]) +
-        '<p class="empty">Counterfactuals on a known past. They show where the damage was concentrated; they are not a strategy.</p>'
-      : ""));
+    ], "No open positions."));
 
   // ── tabs (real controls: click, keyboard, deep link) ──────────────
   var PANELS = [
     ["overview", "Overview"], ["pnl", "P&L"], ["instruments", "Instruments"],
-    ["funding", "Funding"], ["expiry", "Expiry"], ["risk", "Risk"],
+    ["funding", "Funding"], ["risk", "Risk"],
     ["charges", "Charges"], ["portfolio", "Portfolio"]
   ];
   var bar = document.getElementById("tabs");

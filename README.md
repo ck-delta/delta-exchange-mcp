@@ -188,8 +188,8 @@ server ships three. Your assistant loads them on its own, so you just ask the qu
 | `funding-carry` | "Which perps are worth the carry?" | no |
 
 **`pnl-analytics`** is the big one. It reads your fills, matches them into round trips, and
-produces a full performance review across eight views (overview, P&L, instruments, funding,
-expiry, risk, charges, portfolio), plus a trader persona and an A+ to D- grade. It writes a
+produces a full performance review across seven views (overview, P&L, instruments, funding,
+risk, charges, portfolio), plus a trader persona and an A+ to D- grade. It writes a
 **self-contained HTML dashboard** to `~/.delta-exchange-mcp/reports/` that opens offline in any
 browser, and gives you the headline numbers in chat.
 

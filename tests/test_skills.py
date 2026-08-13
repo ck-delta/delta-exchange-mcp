@@ -64,6 +64,28 @@ def test_every_shipped_skill_is_well_formed():
         assert skill.uri == f"skill://delta/{skill.name}"
 
 
+def test_pnl_analytics_dropped_views_stay_dropped():
+    """Expiry/DTE, what-ifs, projections and achievements were cut on purpose.
+
+    The views live in three files that must stay coherent — a formula returning
+    in metrics.md without its dashboard panel (or the reverse) ships a skill
+    that promises what it cannot render.
+    """
+    skill = next(s for s in skills.discover() if s.name == "pnl-analytics")
+    corpus = {"SKILL.md": skill.body, **skill.files}
+    for name, text in corpus.items():
+        low = text.lower()
+        for banned in (
+            "p-expiry",
+            "what_ifs",
+            "what-if",
+            "## projections",
+            "dte bucket",
+        ):
+            assert banned not in low, f"{name} still mentions {banned!r}"
+    assert "seven views" in corpus["references/metrics.md"].lower()
+
+
 def test_credential_skills_are_hidden_without_keys():
     gated = {s.name for s in skills.discover() if s.requires == skills.CREDENTIALS}
     public_names = {s.name for s in skills.available(PUBLIC_CFG)}

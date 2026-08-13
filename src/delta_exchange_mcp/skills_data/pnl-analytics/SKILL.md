@@ -1,6 +1,6 @@
 ---
 name: pnl-analytics
-description: Full trading performance review from your own fills — FIFO-matched round trips, eight analytical views, a trader persona, an A+ to D- grade, and a self-contained HTML dashboard. Needs API credentials.
+description: Full trading performance review from your own fills — FIFO-matched round trips, seven analytical views, a trader persona, an A+ to D- grade, and a self-contained HTML dashboard. Needs API credentials.
 requires: credentials
 ---
 
@@ -19,8 +19,8 @@ Read this file first. Then load only the references you need:
 | File | Read it when |
 |---|---|
 | `references/algorithm.md` | Always. Data acquisition and FIFO round-trip matching. |
-| `references/metrics.md` | Always. The eight views and every formula. |
-| `references/persona-grade.md` | For the persona, the grade, what-if scenarios, projections. |
+| `references/metrics.md` | Always. The seven views and every formula. |
+| `references/persona-grade.md` | For the persona and the grade. |
 | `assets/dashboard.html` | When producing the dashboard file. |
 
 ## Decide how to compute before you fetch anything
@@ -103,6 +103,5 @@ Expand only when asked.
 ## Boundaries
 
 This skill reads history and describes it. It does not place orders, and past
-performance here is a record, not a forecast. The projection figures in
-`references/persona-grade.md` are arithmetic extrapolations for illustration;
-label them as such and never present them as expected returns.
+performance here is a record, not a forecast. Never extrapolate the window's
+P&L into projected returns; if asked, say the sample does not support it.

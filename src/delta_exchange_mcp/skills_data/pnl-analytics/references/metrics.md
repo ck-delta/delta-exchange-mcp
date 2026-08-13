@@ -1,4 +1,4 @@
-# The eight views
+# The seven views
 
 Every formula below runs on the round trips produced by `algorithm.md`, plus the
 funding transactions, open positions and balances. Round money to 2 decimals,
@@ -20,6 +20,8 @@ avg_loser      = mean(net_pnl of losers)          # negative
 win_loss_ratio = abs(avg_winner / avg_loser)
 best_trade     = max(net_pnl)
 worst_trade    = min(net_pnl)
+funding_pnl    = total_funding                    # view 4; wallet transactions
+net_total      = net_pnl + funding_pnl            # what the account actually saw
 ```
 
 Split `net_pnl` by `direction` (long vs short) and by `instrument_type`
@@ -66,6 +68,11 @@ dates, treating a missing date as 0. Fewer than 3 shared observations returns 0.
 This is a correlation of daily P&L, not of price. Say so — it measures whether
 positions won and lost together, which is the useful question.
 
+**Pareto**: take the underlyings with positive `net_pnl`, sort descending, and
+accumulate as a percentage of the total positive P&L. `pareto_index` is the rank
+of the first underlying at or past 80%. Report it as "80% of the profit came
+from N of M underlyings", with the names. `n/a` when nothing is profitable.
+
 ## 4. Funding
 
 Funding comes from `get_wallet_transactions(transaction_types=["funding"])`, not
@@ -83,28 +90,7 @@ table of trading P&L beside funding P&L, over the union of both sets of months.
 For a perps trader this view often carries the answer. Trading P&L can be
 positive while funding drains the account.
 
-## 5. Expiry (options only)
-
-Skip the view when there are no option round trips.
-
-Parse the expiry from the last dash-separated part of `product_symbol`
-(`C-ETH-2340-160426` → `160426`, read as `DDMMYY` → `2026-04-16`).
-
-```
-dte = max(0, floor((expiry_date - entry_time) / 1 day))
-```
-
-| DTE at entry | Expiry type | DTE bucket |
-|---|---|---|
-| 0–1 | Daily | `0-day` when exactly 0, else `1-3 days` |
-| 2–7 | Weekly | `1-3 days` or `4-7 days` |
-| 8–31 | Monthly | `7+ days` |
-| 32+ | Quarterly+ | `7+ days` |
-
-Report P&L, count and win rate by expiry type; P&L and count by DTE bucket and
-by expiry date.
-
-## 6. Risk
+## 5. Risk
 
 Daily returns are the daily `net_pnl` series, in currency, not percent.
 
@@ -130,11 +116,20 @@ max_drawdown = min(dd)                      # negative
 
 That percentage is relative to peak cumulative P&L, not to account equity. When
 the curve starts negative, `peak` stays 0 and drawdown reads 0 — say `n/a`
-rather than "no drawdown".
+rather than "no drawdown". Keep the per-day drawdown series (last 500 points)
+for the dashboard's drawdown chart.
 
 ```
-calmar / recovery_factor = net_pnl / abs(max_drawdown)
+max_dd_amount   = min(cumulative - peak)           # currency, negative
+recovery_factor = net_pnl / abs(max_dd_amount)     # n/a when max_dd_amount == 0
+calmar          = mean * 365 / abs(max_dd_amount)  # annualised profit over worst dip
 ```
+
+Report `std` as **daily volatility** in currency, its own line.
+
+**Drawdown duration** is the longest span in days from a peak to the day the
+curve regains it. When the last drawdown never recovers inside the window,
+report the span to the window's end and label it "ongoing".
 
 **Streaks** are computed on days, not trades: consecutive profitable days and
 consecutive losing days, current and best.
@@ -142,14 +137,18 @@ consecutive losing days, current and best.
 Sharpe and Sortino on fewer than about 30 daily observations are noise. Print
 the value with the observation count, or `n/a` under 7 days.
 
-## 7. Charges
+## 6. Charges
 
 ```
 fees_pct_pnl    = total_fees / abs(gross_pnl) * 100
 fees_pct_volume = total_fees / sum(notional_value) * 100
 maker_fill_rate = count(role == "maker") / len(trades) * 100
 gst_estimate    = total_fees * 0.18
+trades_to_cover = total_fees / expectancy          # n/a when expectancy <= 0
 ```
+
+`trades_to_cover` reads "at your current edge, N average trades pay for this
+window's fees". Print it when expectancy is positive.
 
 Split fees by maker and taker, by instrument (perpetuals vs options), and the
 top 10 underlyings by fee spend.
@@ -159,7 +158,7 @@ not a tax statement — label it that way. Delta's own baseline rates are 0.05%
 taker and 0.02% maker on perpetuals; use the product's real
 `taker_commission_rate` when precision matters.
 
-## 8. Portfolio
+## 7. Portfolio
 
 From `get_margined_positions`, for each position with non-zero `size`: symbol,
 underlying, absolute size, direction from the sign, `entry_price`, `mark_price`,
