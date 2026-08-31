@@ -26,6 +26,9 @@ knowledge of current positions, such as "should I hedge".
 3. Only if a position is missing `contract_value` or an index price, call
    `get_product(symbol)` for that one symbol. Do not fetch the whole product
    list for a handful of positions.
+4. For each open option, call `get_ticker(symbol)` for its current delta. Read
+   `delta` from the ticker or its greeks object when present. Do not use an old
+   fill-time delta or estimate one from the option side.
 
 ## Three traps that produce wrong numbers
 
@@ -67,8 +70,15 @@ or a risk finding.
   underlying above 50%.
 - **Margin headroom**: `available_balance / balance`. Under 20% is thin — a
   routine adverse move starts forcing liquidations rather than just drawdown.
-- **Directional net**: sum notional signed by direction, per underlying and
-  overall, so an apparent hedge that is really a doubled-up long is visible.
+- **Gross exposure**: sum the absolute notional above. Keep this separate from
+  directional exposure.
+- **Directional net for futures**: `size * contract_value * index_price`.
+- **Directional net for options**: delta-equivalent exposure is
+  `size * contract_value * index_price * delta`. A put delta is negative, so a
+  short put and a long call can point in the same direction. If an open option
+  has no current delta, report directional net as `n/a` for that underlying and
+  for the whole book. Do not substitute the position side. Gross exposure is
+  still available.
 
 ## Output
 

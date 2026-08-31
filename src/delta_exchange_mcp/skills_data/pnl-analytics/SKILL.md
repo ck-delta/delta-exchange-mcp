@@ -18,8 +18,9 @@ Read this file first. Then load only the references you need:
 
 | File | Read it when |
 |---|---|
-| `references/algorithm.md` | Always. Data acquisition and FIFO round-trip matching. |
-| `references/metrics.md` | Always. The seven views and every formula. |
+| `references/contract.md` | Always. The executable calculator's checked input and report contracts. |
+| `references/algorithm.md` | When auditing how the calculator matches FIFO lots. |
+| `references/metrics.md` | When interpreting the seven calculated views. |
 | `references/persona-grade.md` | For the persona and the grade. |
 | `assets/dashboard.html` | When producing the dashboard file. |
 
@@ -35,10 +36,16 @@ wrong, which is worse than refusing. Pick a tier and say which one you used.
    start_time_us=<account start>)` writes the full history to disk in one call.
    The export path is restricted to the working directory or home.
 2. `list_products(page_size=500)` for the product map, saved as JSON alongside.
-3. Write a throwaway script implementing `references/algorithm.md` and
-   `references/metrics.md`. Read the CSV header rather than assuming column
-   order. Have it print one JSON object.
-4. Read that JSON back. Every number you report comes from it.
+3. Load `references/contract.md`. Write its `delta.pnl.input.v1` JSON beside the
+   CSV. Use `null` when funding or positions could not be fetched, and `[]` when
+   the call succeeded with no rows.
+4. Run the calculator from the same distribution as this server:
+   `uvx --from delta-exchange-mcp delta-exchange-pnl --input <input.json> --output <report.json>
+   --dashboard <report.html>`.
+5. Read the versioned report JSON back. Every number you report comes from it.
+
+Do not rewrite the FIFO matcher or financial formulas. The installed calculator
+is the tested implementation of this skill.
 
 The fills never enter the conversation. This is the whole point.
 
@@ -72,17 +79,15 @@ time or a window, and state the window you used in the output.
 
 Two artefacts, in this order.
 
-**1. The dashboard.** Load `assets/dashboard.html`, replace the contents of the
-`<script id="pnl-data" type="application/json">` island with your computed JSON,
-and write the file to `~/.delta-exchange-mcp/reports/pnl-<YYYY-MM-DD>.html`.
-The template's own comments give the exact JSON shape. It is one file with no
-network requests, so it opens offline. Tell the user the path and offer to open
-it.
+**1. The dashboard.** Use the file written by `delta-exchange-pnl --dashboard`.
+It is one file with no network requests, so it opens offline. Tell the user the
+path and offer to open it.
 
 **2. Six lines in chat.** Not a transcript of the dashboard.
 
 - Grade and persona.
 - Net P&L, win rate, and the period covered.
+- Funding and unrealized P&L, or `n/a` when either source was unavailable.
 - The largest single leak, quantified.
 - One concrete change, with the number it would have been worth.
 - Which compute tier you used, and any window limit that applied.
@@ -96,6 +101,8 @@ Expand only when asked.
   headline without labelling it.
 - Funding is a real cost and lives in `get_wallet_transactions`, not in fills.
   A perps trader's fills-only P&L can be positive while the account shrank.
+  If that call fails, report funding and net including funding as `n/a`; do not
+  turn the missing source into zero.
 - If a metric needs more history than exists — Sharpe on four days of data —
   print `n/a` and say why. Do not annualise noise.
 - State the window and the fill count on every report.

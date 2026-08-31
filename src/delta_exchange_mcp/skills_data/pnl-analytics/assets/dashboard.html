@@ -19,7 +19,8 @@
     "meta":     {"generated":"2026-08-01","window":"2026-01-01 to 2026-08-01",
                  "fills":1234,"trades":312,"tier":"A","notes":"optional caveat"},
     "headline": {"net_pnl":0,"unrealized":0,"win_rate":0,"total_fees":0,
-                 "funding":0,"grade":"B+","score":71.4,"persona":"BTC Perps Warrior",
+                 "funding":null,"net_including_funding":null,
+                 "grade":"B+","score":71.4,"persona":"BTC Perps Warrior",
                  "leak":"one sentence naming the biggest single leak",
                  "fix":"one sentence naming the change and what it was worth"},
     "grade_dimensions": [{"label":"Win Rate","score":18.5,"max":25}, ...],
@@ -361,8 +362,13 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
     var cell = 13, gap = 3, pitch = cell + gap;
     var first = new Date(days[0].date + "T00:00:00Z");
     var startDow = (first.getUTCDay() + 6) % 7;          // Monday = 0
+    var monday = new Date(first.getTime());
+    monday.setUTCDate(first.getUTCDate() - startDow);
     var mx = Math.max.apply(null, days.map(function (d) { return Math.abs(+d.pnl || 0); })) || 1;
-    var weeks = Math.ceil((days.length + startDow) / 7);
+    var indexes = days.map(function (d) {
+      return Math.floor((new Date(d.date + "T00:00:00Z") - monday) / 86400000);
+    });
+    var weeks = Math.floor(Math.max.apply(null, indexes) / 7) + 1;
     var w = Math.max(320, weeks * pitch + 40), h = 7 * pitch + 22;
     var inner = "";
     ["M", "T", "W", "T", "F", "S", "S"].forEach(function (d, i) {
@@ -370,7 +376,7 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
         '" font-size="9" dominant-baseline="central">' + d + "</text>";
     });
     days.forEach(function (d, i) {
-      var idx = i + startDow, col = Math.floor(idx / 7), row = idx % 7;
+      var idx = indexes[i], col = Math.floor(idx / 7), row = idx % 7;
       var v = +d.pnl || 0;
       var op = (0.18 + Math.abs(v) / mx * 0.82).toFixed(2);
       inner += '<rect x="' + (col * pitch + 16) + '" y="' + (row * pitch + 8) +
@@ -497,14 +503,19 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
   }
 
   // ── panels ────────────────────────────────────────────────────────
+  var fundingKnown = head.funding !== null && head.funding !== undefined;
+  var netWithFunding = fundingKnown
+    ? (head.net_including_funding !== null && head.net_including_funding !== undefined
+        ? head.net_including_funding : (+head.net_pnl || 0) + (+head.funding || 0))
+    : null;
   var ov = [
     { label: "Net realised P&L", value: money(head.net_pnl), tone: sign(head.net_pnl) },
     { label: "Unrealised P&L", value: money(head.unrealized), tone: sign(head.unrealized) },
     { label: "Win rate", value: pct(head.win_rate) },
     { label: "Total fees", value: money(head.total_fees) },
-    { label: "Funding", value: money(head.funding), tone: sign(head.funding) },
-    { label: "Net incl. funding", value: money((+head.net_pnl || 0) + (+head.funding || 0)),
-      tone: sign((+head.net_pnl || 0) + (+head.funding || 0)),
+    { label: "Funding", value: money(head.funding), tone: sign(head.funding),
+      note: fundingKnown ? "" : "not fetched" },
+    { label: "Net incl. funding", value: money(netWithFunding), tone: sign(netWithFunding),
       note: "realised P&L plus funding — what the account actually saw" }
   ].concat((D.overview || []).map(function (s) {
     return { label: s.label, value: s.value, note: s.note, tone: s.tone };
@@ -574,8 +585,10 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
     "<h3>Daily P&L correlation</h3>" + matrix(D.correlation, "Correlation matrix") +
     '<p class="empty">Correlation of daily P&amp;L, not of price: it shows whether positions won and lost together.</p>');
 
-  var fu = D.funding || {};
-  set("c-funding",
+  var fu = D.funding;
+  set("c-funding", fu === null || fu === undefined
+    ? empty("Funding was not fetched for this report.")
+    :
     stats([
       { label: "Net funding", value: money(fu.total), tone: sign(fu.total) },
       { label: "Paid", value: money(fu.paid), tone: "neg" },
@@ -606,15 +619,16 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
       { label: "Fees as % of gross P&L", value: pct(ch.fees_pct_pnl) },
       { label: "Fees as % of volume", value: pct(ch.fees_pct_volume, 4) },
       { label: "GST estimate", value: money(ch.gst_estimate), note: "18% of fees — an estimate, not a tax statement" },
-      { label: "Trades to cover fees", value: ch.trades_to_cover !== undefined ? String(ch.trades_to_cover) : "—",
+      { label: "Trades to cover fees", value: ch.trades_to_cover !== null && ch.trades_to_cover !== undefined ? String(ch.trades_to_cover) : "—",
         note: "average trades at your current edge that pay for this window's fees" }
     ]) +
     (arr(ch.by_token)
       ? fig("Fees by underlying", rankChart(ch.by_token, "token", "fees", "Fees by token", m$))
       : ""));
 
-  set("c-portfolio",
-    table(D.positions, [
+  set("c-portfolio", D.positions === null || D.positions === undefined
+    ? empty("Open positions were not fetched for this report.")
+    : table(D.positions, [
       ["Symbol", "symbol"], ["Side", "direction"],
       ["Size", "size", function (v) { return num(v, 0); }],
       ["Notional", "notional", m$], ["Entry", "entry_price", function (v) { return num(v); }],

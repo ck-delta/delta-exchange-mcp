@@ -1,7 +1,7 @@
 # Data acquisition and round-trip matching
 
-Ported from the Delta P&L Analytics engine (`analytics-engine.ts`, `matchTrades`).
-Follow it exactly — the metrics in `metrics.md` assume trades in this shape.
+The installed `delta-exchange-pnl` command owns this algorithm. This reference
+explains its output; do not reimplement the matcher in generated code.
 
 ## 1. Fetch
 
@@ -24,11 +24,11 @@ Every `*_us` argument is microseconds since epoch. Multiply seconds by 1e6.
 
 ## 2. Match fills into round trips
 
-Sort all fills ascending by `created_at`. Hold one open position per
+Sort all fills ascending by `created_at`. Hold a FIFO queue of entry lots per
 `product_id`:
 
 ```
-position = {size, avg_entry, fees, first_time, role}
+lot = {signed_size, entry_price, remaining_entry_fee, opened_at, role}
 ```
 
 `size` is signed: positive long, negative short. For each fill:
@@ -36,33 +36,35 @@ position = {size, avg_entry, fees, first_time, role}
 ```
 size   = int(fill.size)
 price  = float(fill.price)
-fee    = abs(float(fill.commission))
+fee    = float(fill.commission)
 signed = +size if fill.side == "buy" else -size
 ```
 
 Skip the fill when `size` or `price` is zero.
 
-**Same direction, or flat.** When `old_size >= 0 and signed > 0`, or
-`old_size <= 0 and signed < 0`, or `old_size == 0` — the position grows:
-
-```
-avg_entry = (avg_entry * abs(old_size) + price * size) / (abs(old_size) + size)
-size      = old_size + signed
-fees     += fee
-```
-
-When `old_size` was 0, reset `first_time` to this fill's `created_at` and `role`
-to this fill's `role`. Continue to the next fill.
+**Same direction, or flat.** Append one lot. Do not average it with an older
+lot. That separate entry price and time are what make the result FIFO.
 
 **Opposing direction.** The fill closes, and may then flip:
 
 ```
-close_qty = min(abs(signed), abs(old_size))
-direction = "long" if old_size > 0 else "short"
+close_qty = min(abs(signed_remaining), abs(oldest_lot.signed_size))
+direction = "long" if oldest_lot.signed_size > 0 else "short"
 
-pnl = close_qty * contract_value * (price - avg_entry)        # long
-pnl = close_qty * contract_value * (avg_entry - price)        # short
+pnl = close_qty * contract_value * (price - lot.entry_price)        # long
+pnl = close_qty * contract_value * (lot.entry_price - price)        # short
 ```
+
+Consume the oldest lot first. A close that spans three entry lots emits three
+round trips. A partial close leaves the unused quantity in the oldest lot. A
+fill that crosses through zero consumes the old queue, then opens one new lot in
+the other direction.
+
+Allocate each fill's commission by quantity. Keep its sign: a negative maker
+commission is a rebate and increases net P&L. The emitted round trip receives
+the matched share of the entry lot's remaining fee and the matched share of the
+closing fill's fee. Leave the unconsumed entry fee on a partial lot. This keeps
+total fees exact without charging an old entry fee twice.
 
 Emit one round trip:
 
@@ -72,36 +74,21 @@ Emit one round trip:
 | `product_symbol` | from the fill |
 | `instrument_type` | `call` / `put` if `contract_type` contains "call" / "put", else `perpetual` |
 | `direction` | as above |
-| `entry_time` / `exit_time` | `first_time` / this fill's `created_at` |
-| `entry_price` / `exit_price` | `avg_entry` / `price` |
+| `entry_time` / `exit_time` | the lot's `opened_at` / this fill's `created_at` |
+| `entry_price` / `exit_price` | the lot's entry price / this fill's price |
 | `size` | `close_qty` |
 | `notional_value` | `close_qty * contract_value * price` |
 | `pnl` | gross, from above |
-| `fees` | `position.fees + fee` — all fees accumulated on the position, charged to this exit |
+| `fees` | the quantity-matched entry fee plus the quantity-matched exit fee |
 | `net_pnl` | `pnl - fees` |
 | `pnl_pct` | `pnl / notional_value * 100`, or 0 when notional is 0 |
 | `hold_duration_hours` | `(exit_time - entry_time) / 3600` |
 | `role` | the position's role, one of `maker` / `taker` |
 
-**Then update the position.** With `remaining = abs(signed) - close_qty`:
-
-- `remaining > 0` — the fill flipped the position. Start fresh at this fill:
-  `size = ±remaining` (sign of `signed`), `avg_entry = price`, `fees = 0`,
-  `first_time = this fill's time`.
-- `remaining == 0` — reduced or closed. `size = old_size + signed`; keep
-  `avg_entry` when the new size is non-zero, otherwise 0; `fees = 0`;
-  `first_time` unchanged.
-
-Resetting `fees` to 0 after an exit is deliberate: those fees were already
-charged to the round trip just emitted. Carrying them forward double-counts.
-
 ## 3. Known limits of this method
 
 State these when they apply rather than letting the reader assume otherwise.
 
-- **Fees land on the exit.** A position built over ten entries and closed once
-  attributes all ten entry fees to that single round trip. Totals are right;
-  per-trade fee figures on partial exits are approximate.
 - **Positions open at the start of the window** produce an exit with no matching
   entry. They are skipped, because the first fill seen for a product is treated
   as an opening fill. A window that begins mid-position understates activity —
@@ -112,6 +99,5 @@ State these when they apply rather than letting the reader assume otherwise.
 - **Options that expired worthless** may have no closing fill at all. They
   settle. Reconcile with `get_settlement_prices` if the user's history is
   options-heavy and the numbers look light.
-- **`contract_value` defaults to 1** when the product is unknown. A missing
-  product map silently rescales every number, so verify the map covers every
-  `product_id` in the fills before computing, and report how many did not match.
+- **A missing product contract stops the calculation.** The calculator never
+  defaults `contract_value` to 1 because that can silently rescale every result.

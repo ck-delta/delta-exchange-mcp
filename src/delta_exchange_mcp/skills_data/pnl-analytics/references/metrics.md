@@ -143,8 +143,8 @@ the value with the observation count, or `n/a` under 7 days.
 fees_pct_pnl    = total_fees / abs(gross_pnl) * 100
 fees_pct_volume = total_fees / sum(notional_value) * 100
 maker_fill_rate = count(role == "maker") / len(trades) * 100
-gst_estimate    = total_fees * 0.18
-trades_to_cover = total_fees / expectancy          # n/a when expectancy <= 0
+gst_estimate    = max(total_fees, 0) * 0.18
+trades_to_cover = total_fees / expectancy          # n/a when fees or expectancy <= 0
 ```
 
 `trades_to_cover` reads "at your current edge, N average trades pay for this

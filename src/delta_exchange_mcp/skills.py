@@ -58,6 +58,55 @@ class Skill:
         return self.name.replace("-", "_")
 
 
+class Catalog:
+    """The skill definitions and their live credential entitlement."""
+
+    def __init__(self, shipped: list[Skill], has_credentials: bool) -> None:
+        self._shipped = tuple(shipped)
+        self._by_name = {skill.name: skill for skill in shipped}
+        self._by_prompt = {skill.prompt_name: skill for skill in shipped}
+        self._has_credentials = has_credentials
+
+    def set_credentials(self, present: bool) -> bool:
+        """Update the entitlement and report whether the visible catalog changed."""
+        changed = present != self._has_credentials
+        self._has_credentials = present
+        return changed
+
+    def available(self) -> list[Skill]:
+        """Skills allowed by the current credential entitlement."""
+        return [
+            skill
+            for skill in self._shipped
+            if skill.requires != CREDENTIALS or self._has_credentials
+        ]
+
+    @property
+    def shipped(self) -> tuple[Skill, ...]:
+        """Every packaged skill, independent of the live entitlement."""
+        return self._shipped
+
+    def get(self, name: str) -> Skill | None:
+        skill = self._by_name.get(name)
+        if skill is None or (
+            skill.requires == CREDENTIALS and not self._has_credentials
+        ):
+            return None
+        return skill
+
+    def allows_uri(self, uri: str) -> bool:
+        """Whether a skill resource URI is visible in the current entitlement."""
+        if not uri.startswith(URI_PREFIX):
+            return True
+        name = uri.removeprefix(URI_PREFIX).split("/", 1)[0]
+        return self.get(name) is not None
+
+    def allows_prompt(self, name: str) -> bool:
+        """Whether a registered prompt is visible in the current entitlement."""
+        skill = self._by_prompt.get(name)
+        return skill is None or self.get(skill.name) is not None
+
+
 def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
     """Split leading `---` frontmatter from the body.
 
@@ -144,12 +193,11 @@ def _add_resource(
     )
 
 
-def register(mcp: FastMCP, cfg: config_mod.Config) -> None:
+def register(mcp: FastMCP, cfg: config_mod.Config) -> Catalog:
     """Publish the available skills as resources, tools, and prompts."""
-    skills = available(cfg)
-    by_name = {s.name: s for s in skills}
+    catalog = Catalog(discover(), cfg.has_credentials)
 
-    for skill in skills:
+    for skill in catalog.shipped:
         _add_resource(mcp, skill.uri, skill.name, skill.description, skill.body)
         for rel, text in skill.files.items():
             _add_resource(
@@ -177,7 +225,7 @@ def register(mcp: FastMCP, cfg: config_mod.Config) -> None:
                     "uri": s.uri,
                     "files": sorted(s.files),
                 }
-                for s in skills
+                for s in catalog.available()
             ],
             "hint": "Call get_skill(name) for the full procedure.",
         }
@@ -190,10 +238,11 @@ def register(mcp: FastMCP, cfg: config_mod.Config) -> None:
         entries in that skill's `files` list, such as `references/algorithm.md` —
         for a supporting file. Read the skill first; it says which files matter.
         """
-        skill = by_name.get(name)
+        skill = catalog.get(name)
         if skill is None:
             raise ValueError(
-                f"unknown skill {name!r}; available: {sorted(by_name) or 'none'}"
+                f"unknown skill {name!r}; available: "
+                f"{sorted(s.name for s in catalog.available()) or 'none'}"
             )
         if path is None:
             return skill.body
@@ -203,8 +252,9 @@ def register(mcp: FastMCP, cfg: config_mod.Config) -> None:
             )
         return skill.files[path]
 
-    for skill in skills:
+    for skill in catalog.shipped:
         _register_prompt(mcp, skill)
+    return catalog
 
 
 def _register_prompt(mcp: FastMCP, skill: Skill) -> None:

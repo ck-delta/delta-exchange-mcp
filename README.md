@@ -191,7 +191,9 @@ server ships three. Your assistant loads them on its own, so you just ask the qu
 produces a full performance review across seven views (overview, P&L, instruments, funding,
 risk, charges, portfolio), plus a trader persona and an A+ to D- grade. It writes a
 **self-contained HTML dashboard** to `~/.delta-exchange-mcp/reports/` that opens offline in any
-browser, and gives you the headline numbers in chat.
+browser, and gives you the headline numbers in chat. The installed `delta-exchange-pnl`
+calculator performs the FIFO matching and metrics locally from the exported CSV, so the raw
+fill history does not need to enter the conversation.
 
 Skills reach your client three ways, so it does not matter which client you use:
 

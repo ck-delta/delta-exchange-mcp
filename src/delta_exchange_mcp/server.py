@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
+from typing import Any
 
 import anyio
+import mcp.types as types
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.lowlevel import NotificationOptions
 from mcp.server.models import InitializationOptions
 from mcp.server.session import ServerSession
 from mcp.server.stdio import stdio_server
+from pydantic import AnyUrl
 
 from delta_exchange_mcp import audit_log
 from delta_exchange_mcp import config as config_mod
@@ -90,6 +94,7 @@ class DeltaMCP(FastMCP):
             None
         )
         self.live_client: DeltaClient | None = None
+        self.skill_catalog: skills.Catalog | None = None
         super().__init__("delta-exchange", instructions=INSTRUCTIONS)
 
     def before_list_tools(
@@ -114,6 +119,46 @@ class DeltaMCP(FastMCP):
         if self.live_client is not None:
             await self.live_client.aclose()
 
+    async def list_resources(self) -> list[types.Resource]:
+        """List only skill resources allowed by the live credential state."""
+        resources = await super().list_resources()
+        if self.skill_catalog is None:
+            return resources
+        return [
+            resource
+            for resource in resources
+            if self.skill_catalog.allows_uri(str(resource.uri))
+        ]
+
+    async def read_resource(self, uri: AnyUrl | str) -> Iterable[ReadResourceContents]:
+        """Reject direct reads of skills hidden by the live credential state."""
+        if self.skill_catalog is not None and not self.skill_catalog.allows_uri(
+            str(uri)
+        ):
+            raise ValueError(f"resource unavailable: {uri}")
+        return await super().read_resource(uri)
+
+    async def list_prompts(self) -> list[types.Prompt]:
+        """List only skill prompts allowed by the live credential state."""
+        prompts = await super().list_prompts()
+        if self.skill_catalog is None:
+            return prompts
+        return [
+            prompt
+            for prompt in prompts
+            if self.skill_catalog.allows_prompt(prompt.name)
+        ]
+
+    async def get_prompt(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> types.GetPromptResult:
+        """Reject direct prompt reads hidden by the live credential state."""
+        if self.skill_catalog is not None and not self.skill_catalog.allows_prompt(
+            name
+        ):
+            raise ValueError(f"prompt unavailable: {name}")
+        return await super().get_prompt(name, arguments)
+
 
 def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
     cfg = cfg or config_mod.load()
@@ -131,7 +176,8 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
     market.register(mcp, client)
 
     # After the tools, so the skills only ever point at a surface that exists.
-    skills.register(mcp, cfg)
+    skill_catalog = skills.register(mcp, cfg)
+    mcp.skill_catalog = skill_catalog
 
     account_registered = False
     trade_audit = None
@@ -215,6 +261,7 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
         next_config = config_mod.load_for_client(client_name, shared)
         identity_changed = http_identity(live) != http_identity(next_config)
         tools_changed = False
+        skills_changed = skill_catalog.set_credentials(next_config.has_credentials)
         transitions: list[str] = []
 
         if live.mode == "trade" and (identity_changed or next_config.mode != "trade"):
@@ -268,6 +315,9 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
             announce_transition("+".join(transitions))
         if notify and tools_changed:
             await session.send_tool_list_changed()
+        if notify and skills_changed:
+            await session.send_resource_list_changed()
+            await session.send_prompt_list_changed()
         return next_config, shared
 
     if cfg.has_credentials:
@@ -367,16 +417,16 @@ def build_server(cfg: config_mod.Config | None = None) -> DeltaMCP:
 
 
 def initialization_options(mcp: FastMCP) -> InitializationOptions:
-    """What this server tells a client about itself, declaring a changeable tool list.
+    """Declare the tool, resource, and prompt catalogs as changeable.
 
     FastMCP's own `run_stdio_async` builds these with every notification flag off, so the
-    server would advertise `tools.listChanged: false`. A client told that has no reason to
-    re-read the tool list, which makes the notification sent when a saved credential
-    brings the account tools up a no-op — leaving the restart it exists to avoid as the
-    only way through.
+    server would advertise each `listChanged` capability as false. A client told that has
+    no reason to re-read a catalog when a saved credential changes the account surface.
     """
     return mcp._mcp_server.create_initialization_options(
-        NotificationOptions(tools_changed=True)
+        NotificationOptions(
+            prompts_changed=True, resources_changed=True, tools_changed=True
+        )
     )
 
 

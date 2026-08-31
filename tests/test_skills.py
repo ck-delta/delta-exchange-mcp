@@ -86,6 +86,19 @@ def test_pnl_analytics_dropped_views_stay_dropped():
     assert "seven views" in corpus["references/metrics.md"].lower()
 
 
+def test_pnl_skill_uses_the_shipped_calculator_contract() -> None:
+    skill = next(s for s in skills.discover() if s.name == "pnl-analytics")
+    assert "delta-exchange-pnl --input" in skill.body
+    assert "references/contract.md" in skill.files
+    assert "delta.pnl.input.v1" in skill.files["references/contract.md"]
+
+
+def test_position_risk_uses_delta_for_option_direction() -> None:
+    skill = next(s for s in skills.discover() if s.name == "position-risk")
+    assert "index_price * delta" in skill.body
+    assert "report directional net as `n/a`" in skill.body
+
+
 def test_credential_skills_are_hidden_without_keys():
     gated = {s.name for s in skills.discover() if s.requires == skills.CREDENTIALS}
     public_names = {s.name for s in skills.available(PUBLIC_CFG)}
