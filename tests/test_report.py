@@ -119,6 +119,50 @@ def test_charges_use_each_fill_role_and_include_open_fill_fees(tmp_path: Path) -
     assert report.charges.by_token[0].fees == 12
 
 
+def test_charge_breakdowns_reconcile_sub_cent_fees(tmp_path: Path) -> None:
+    products = [
+        Product(
+            product_id=100 + index,
+            symbol=f"T{index}USD",
+            underlying=f"T{index}",
+            contract_type="perpetual_futures",
+            contract_value=1,
+        )
+        for index in range(11)
+    ]
+    fills = [
+        Fill(
+            product_id=product.product_id,
+            product_symbol=product.symbol,
+            quantity=1,
+            side="buy",
+            price=10,
+            fee=0.000000006,
+            created_at=START + timedelta(minutes=index),
+            role="maker" if index % 2 == 0 else "taker",
+        )
+        for index, product in enumerate(products)
+    ]
+
+    report = calculate(report_input(tmp_path, products=products), fills)
+
+    assert report.headline.total_fees == 0.00000007
+    assert report.charges.total_fees == 0.00000007
+    assert report.charges.maker_fees == 0.00000004
+    assert report.charges.taker_fees == 0.00000003
+    assert (
+        round(report.charges.maker_fees + report.charges.taker_fees, 8)
+        == report.charges.total_fees
+    )
+    assert (
+        round(sum(item.fees for item in report.charges.by_token), 8)
+        == report.charges.total_fees
+    )
+    assert len(report.charges.by_token) == 11
+    assert all(item.fees >= 0 for item in report.charges.by_token)
+    assert report.charges.by_token[-1].token == "Other underlyings"
+
+
 def test_fifo_close_can_span_lots_and_flip_direction() -> None:
     closing = Fill(
         product_id=27,
@@ -177,6 +221,24 @@ def test_missing_product_contract_fails_instead_of_assuming_one(
             None,
         ),
         (
+            [(0, 10), (1, -5), (11, 5), (20, -1)],
+            25,
+            11,
+            None,
+        ),
+        (
+            [(5, -1)],
+            10,
+            6,
+            "ongoing at window end",
+        ),
+        (
+            [(0, -1)],
+            10,
+            10,
+            "ongoing at window end",
+        ),
+        (
             [(0, 10), (1, -5), (2, 5), (3, 1), (4, -1)],
             10,
             7,
@@ -189,7 +251,14 @@ def test_missing_product_contract_fails_instead_of_assuming_one(
             "ongoing at window end",
         ),
     ],
-    ids=["recovered-longer", "ongoing-longer", "ongoing-wins-tie"],
+    ids=[
+        "recovered-longer",
+        "recovered-longer-after-idle-peak",
+        "first-loss-after-idle-peak",
+        "first-loss-on-window-start",
+        "ongoing-longer",
+        "ongoing-wins-tie",
+    ],
 )
 def test_longest_drawdown_selects_the_interval_reported_as_ongoing(
     tmp_path: Path,

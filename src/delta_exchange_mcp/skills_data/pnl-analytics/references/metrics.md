@@ -130,6 +130,9 @@ Report `std` as **daily volatility** in currency, its own line.
 **Drawdown duration** is the longest span in days from a peak to the day the
 curve regains it. When the last drawdown never recovers inside the window,
 report the span to the window's end and label it "ongoing".
+Dates without a closed trade have zero P&L. While equity is at its peak, those
+dates move the peak date forward, so a later loss starts the interval on the
+day before the loss rather than on the last date that had a trade.
 
 **Streaks** are computed on days, not trades: consecutive profitable days and
 consecutive losing days, current and best.
@@ -153,6 +156,10 @@ window's fees". Print it when expectancy is positive.
 Calculate charge totals from every fill, including fills that leave a position
 open. Split fees by each fill's maker or taker role and show the top 10
 underlyings by fee spend.
+Keep up to eight decimal places for charge amounts. Reconcile the rounded maker,
+taker, and per-underlying values to their rounded totals so sub-cent commissions
+do not disappear from the breakdown or change sign. Show the ten largest
+underlyings separately and combine any remainder as `Other underlyings`.
 
 `gst_estimate` is 18% Indian GST applied to exchange fees. It is an estimate,
 not a tax statement — label it that way. Delta's own baseline rates are 0.05%

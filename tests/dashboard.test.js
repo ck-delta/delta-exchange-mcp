@@ -24,6 +24,15 @@ test("dashboard program compiles", () => {
   assert.doesNotThrow(() => new vm.Script(source));
 });
 
+test("money formatting preserves sub-cent charges", () => {
+  const context = {};
+  vm.runInNewContext(sourceOf("num", "\n  function pct"), context);
+
+  assert.equal(context.money(0.004), "$0.004");
+  assert.equal(context.money(0.00000007), "$0.00000007");
+  assert.equal(context.money(12), "$12.00");
+});
+
 test("calendar positions sparse days from their UTC dates", () => {
   const context = {
     C: { pos: "green", neg: "red", dim: "gray" },

@@ -5,7 +5,8 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, date as Date, datetime
+from datetime import UTC, date as Date, datetime, timedelta
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal
 
 from delta_exchange_mcp.report.contract import (
     Charges,
@@ -35,6 +36,9 @@ from delta_exchange_mcp.report.contract import (
 )
 from delta_exchange_mcp.report.fifo import Fill, Trade, match
 
+CHARGE_PLACES = 8
+CHARGE_QUANTUM = Decimal(1).scaleb(-CHARGE_PLACES)
+
 
 @dataclass(frozen=True)
 class _ChargeSummary:
@@ -49,31 +53,69 @@ class _ChargeSummary:
 def _summarize_charges(
     fills: list[Fill], products: dict[int, Product]
 ) -> _ChargeSummary:
-    total_fees = maker_fees = taker_fees = total_volume = 0.0
+    maker_fee_values = []
+    taker_fee_values = []
+    volume_values = []
     maker_fills = 0
-    fees_by_token: dict[str, float] = defaultdict(float)
+    fee_values_by_token: dict[str, list[float]] = defaultdict(list)
     for fill in fills:
         product = products[fill.product_id]
-        total_fees += fill.fee
-        total_volume += fill.quantity * product.contract_value * fill.price
-        fees_by_token[product.underlying] += fill.fee
+        volume_values.append(fill.quantity * product.contract_value * fill.price)
+        fee_values_by_token[product.underlying].append(fill.fee)
         if fill.role == "maker":
-            maker_fees += fill.fee
+            maker_fee_values.append(fill.fee)
             maker_fills += 1
         else:
-            taker_fees += fill.fee
+            taker_fee_values.append(fill.fee)
+    maker_fees = math.fsum(maker_fee_values)
+    taker_fees = math.fsum(taker_fee_values)
     return _ChargeSummary(
-        total_fees=total_fees,
+        total_fees=math.fsum((maker_fees, taker_fees)),
         maker_fees=maker_fees,
         taker_fees=taker_fees,
         maker_fill_rate=maker_fills / len(fills) * 100 if fills else 0,
-        total_volume=total_volume,
-        fees_by_token=dict(fees_by_token),
+        total_volume=math.fsum(volume_values),
+        fees_by_token={
+            token: math.fsum(values) for token, values in fee_values_by_token.items()
+        },
     )
 
 
 def _round(value: float, places: int = 2) -> float:
     return round(value, places)
+
+
+def _reconcile_charges(
+    values: dict[str, float], total: float
+) -> tuple[float, dict[str, float]]:
+    """Round one charge breakdown while preserving its rounded total."""
+    raw = {key: Decimal(str(value)) for key, value in values.items()}
+    rounded_total = Decimal(str(total)).quantize(
+        CHARGE_QUANTUM, rounding=ROUND_HALF_EVEN
+    )
+    rounded = {
+        key: value.quantize(CHARGE_QUANTUM, rounding=ROUND_DOWN)
+        for key, value in raw.items()
+    }
+    if not rounded:
+        return float(rounded_total), {}
+    difference = rounded_total - sum(rounded.values(), Decimal())
+    direction = 1 if difference > 0 else -1
+    units = int(abs(difference / CHARGE_QUANTUM))
+    residuals = {
+        key: raw[key] - rounded_value for key, rounded_value in rounded.items()
+    }
+    eligible = sorted(
+        (key for key, residual in residuals.items() if residual * direction > 0),
+        key=lambda key: residuals[key] * direction,
+        reverse=True,
+    )
+    if units > len(eligible):
+        raise ValueError("charge components do not match their total")
+    adjustment = CHARGE_QUANTUM * direction
+    for key in eligible[:units]:
+        rounded[key] += adjustment
+    return float(rounded_total), {key: float(value) for key, value in rounded.items()}
 
 
 def _mean(values: Iterable[float]) -> float:
@@ -328,7 +370,7 @@ def _streaks(values: list[float]) -> tuple[int, int, int, int]:
 
 
 def _drawdown_duration(
-    daily: list[tuple[str, float]], window_end: Date
+    daily: list[tuple[str, float]], window_start: Date, window_end: Date
 ) -> tuple[int, bool]:
     """Return the longest duration and whether a selected longest interval is current.
 
@@ -336,7 +378,6 @@ def _drawdown_duration(
     active at the report window end.
     """
     cumulative = peak = 0.0
-    peak_date = None
     started = None
     longest_recovered = 0
     for date, pnl in daily:
@@ -348,10 +389,11 @@ def _drawdown_duration(
                     longest_recovered, (current_date - started).days
                 )
             peak = cumulative
-            peak_date = current_date
             started = None
         elif started is None:
-            started = peak_date or current_date
+            # Missing dates have zero P&L. Equity remains at its peak until the day
+            # before this first loss, even when the last observed trade is older.
+            started = max(window_start, current_date - timedelta(days=1))
     if started is None:
         return longest_recovered, False
     ongoing_duration = (window_end - started).days
@@ -631,14 +673,36 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
         name: [trade for trade in trades if trade.instrument_type == name]
         for name in ("perpetual", "call", "put")
     }
-    fee_by_token = sorted(
-        (
-            FeeToken(token=token, fees=_round(fees))
-            for token, fees in charges.fees_by_token.items()
-        ),
-        key=lambda item: item.fees,
+    rounded_total_fees, role_fees = _reconcile_charges(
+        {
+            "maker": charges.maker_fees,
+            "taker": charges.taker_fees,
+        },
+        total_fees,
+    )
+    rounded_token_total, token_fees = _reconcile_charges(
+        charges.fees_by_token, total_fees
+    )
+    sorted_token_fees = sorted(
+        token_fees.items(),
+        key=lambda item: item[1],
         reverse=True,
-    )[:10]
+    )
+    shown_token_fees = sorted_token_fees[:10]
+    fee_by_token = [
+        FeeToken(token=token, fees=fees) for token, fees in shown_token_fees
+    ]
+    if len(sorted_token_fees) > len(shown_token_fees):
+        fee_by_token.append(
+            FeeToken(
+                token="Other underlyings",
+                fees=_round(
+                    rounded_token_total
+                    - math.fsum(fees for _, fees in shown_token_fees),
+                    CHARGE_PLACES,
+                ),
+            )
+        )
     leak_item = min(by_underlying, key=lambda item: item.pnl, default=None)
     leak = (
         f"Largest detractor: {leak_item.underlying} at {_money(leak_item.pnl)}."
@@ -646,7 +710,9 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
         else None
     )
     duration, ongoing_drawdown = _drawdown_duration(
-        daily_series, data.window_end.astimezone(UTC).date()
+        daily_series,
+        data.window_start.astimezone(UTC).date(),
+        data.window_end.astimezone(UTC).date(),
     )
     recovery_factor = net_pnl / abs(max_dd_amount) if max_dd_amount else None
     calmar = mean_daily * 365 / abs(max_dd_amount) if max_dd_amount else None
@@ -712,7 +778,7 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
             net_pnl=_round(net_pnl),
             unrealized=unrealized,
             win_rate=_round(win_rate, 1),
-            total_fees=_round(total_fees),
+            total_fees=rounded_total_fees,
             funding=_round(funding_total) if funding_total is not None else None,
             net_including_funding=(
                 _round(net_pnl + funding_total) if funding_total is not None else None
@@ -769,15 +835,15 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
         pareto=pareto,
         risk=risk,
         charges=Charges(
-            total_fees=_round(total_fees),
-            maker_fees=_round(charges.maker_fees),
-            taker_fees=_round(charges.taker_fees),
+            total_fees=rounded_total_fees,
+            maker_fees=role_fees["maker"],
+            taker_fees=role_fees["taker"],
             maker_fill_rate=_round(charges.maker_fill_rate, 1),
             fees_pct_pnl=_round(fees_pct_pnl, 1) if fees_pct_pnl is not None else None,
             fees_pct_volume=(
                 _round(fees_pct_volume, 4) if fees_pct_volume is not None else None
             ),
-            gst_estimate=_round(max(0, total_fees) * 0.18),
+            gst_estimate=_round(max(0, total_fees) * 0.18, CHARGE_PLACES),
             trades_to_cover=(
                 math.ceil(total_fees / expectancy)
                 if total_fees > 0 and expectancy > 0

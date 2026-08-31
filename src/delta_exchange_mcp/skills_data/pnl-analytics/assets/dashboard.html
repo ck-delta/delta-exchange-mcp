@@ -239,7 +239,8 @@ footer{border-top:1px solid var(--divider); margin-top:var(--sp-hg);
   }
   function money(v) {
     if (v === null || v === undefined || v === "" || isNaN(v)) return "—";
-    return (v < 0 ? "−$" : "$") + num(Math.abs(v));
+    return (v < 0 ? "−$" : "$") + Number(Math.abs(v)).toLocaleString("en-US",
+      { minimumFractionDigits: 2, maximumFractionDigits: 8 });
   }
   function pct(v, dp) { return (v === null || v === undefined || isNaN(v)) ? "—" : num(v, dp === undefined ? 1 : dp) + "%"; }
   function sign(v) { return v > 0 ? "pos" : v < 0 ? "neg" : ""; }
