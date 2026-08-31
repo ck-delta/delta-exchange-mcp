@@ -295,6 +295,34 @@ def test_report_window_uses_earlier_fills_only_as_fifo_context(
     assert report.funding.by_token[0].count == 2
 
 
+def test_report_dates_use_utc_at_offset_aware_window_boundary(
+    tmp_path: Path,
+) -> None:
+    window_start = datetime.fromisoformat("2026-01-02T05:00:00+05:30")
+    window_end = datetime.fromisoformat("2026-01-03T05:00:00+05:30")
+    funding = Funding(
+        amount=1,
+        created_at=window_end,
+        underlying="BTC",
+    )
+
+    report = calculate(
+        report_input(
+            tmp_path,
+            window_start=window_start,
+            window_end=window_end,
+            generated_at=window_end,
+            funding=[funding],
+        ),
+        [],
+    )
+
+    assert report.funding is not None
+    assert report.funding.cumulative[0].date == "2026-01-02"
+    assert report.meta.window == "2026-01-01 to 2026-01-02"
+    assert report.meta.generated == "2026-01-02"
+
+
 def test_post_window_recovery_cannot_change_drawdown_or_headline(
     tmp_path: Path,
 ) -> None:

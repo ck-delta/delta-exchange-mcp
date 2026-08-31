@@ -90,6 +90,10 @@ def _in_window(timestamp: datetime, data: ReportInput) -> bool:
     return data.window_start <= timestamp <= data.window_end
 
 
+def _utc_date(timestamp: datetime) -> str:
+    return timestamp.astimezone(UTC).date().isoformat()
+
+
 def _reconcile_charges(
     values: dict[str, float], total: float
 ) -> tuple[float, dict[str, float]]:
@@ -427,7 +431,7 @@ def _funding(
                 )
             token = product.underlying
         by_token[token].append(item.amount)
-        by_date[item.created_at.date().isoformat()] += item.amount
+        by_date[_utc_date(item.created_at)] += item.amount
     total = sum(amount for amounts in by_token.values() for amount in amounts)
     cumulative = 0.0
     points = []
@@ -781,11 +785,8 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
     return Report(
         meta=Meta(
             schema_version=REPORT_VERSION,
-            generated=data.generated_at.date().isoformat(),
-            window=(
-                f"{data.window_start.date().isoformat()} to "
-                f"{data.window_end.date().isoformat()}"
-            ),
+            generated=_utc_date(data.generated_at),
+            window=(f"{_utc_date(data.window_start)} to {_utc_date(data.window_end)}"),
             fills=len(window_fills),
             trades=len(trades),
         ),
