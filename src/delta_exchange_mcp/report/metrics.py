@@ -4,7 +4,8 @@ import math
 import statistics
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, date as Date, datetime
 
 from delta_exchange_mcp.report.contract import (
     Charges,
@@ -33,6 +34,42 @@ from delta_exchange_mcp.report.contract import (
     Underlying,
 )
 from delta_exchange_mcp.report.fifo import Fill, Trade, match
+
+
+@dataclass(frozen=True)
+class _ChargeSummary:
+    total_fees: float
+    maker_fees: float
+    taker_fees: float
+    maker_fill_rate: float
+    total_volume: float
+    fees_by_token: dict[str, float]
+
+
+def _summarize_charges(
+    fills: list[Fill], products: dict[int, Product]
+) -> _ChargeSummary:
+    total_fees = maker_fees = taker_fees = total_volume = 0.0
+    maker_fills = 0
+    fees_by_token: dict[str, float] = defaultdict(float)
+    for fill in fills:
+        product = products[fill.product_id]
+        total_fees += fill.fee
+        total_volume += fill.quantity * product.contract_value * fill.price
+        fees_by_token[product.underlying] += fill.fee
+        if fill.role == "maker":
+            maker_fees += fill.fee
+            maker_fills += 1
+        else:
+            taker_fees += fill.fee
+    return _ChargeSummary(
+        total_fees=total_fees,
+        maker_fees=maker_fees,
+        taker_fees=taker_fees,
+        maker_fill_rate=maker_fills / len(fills) * 100 if fills else 0,
+        total_volume=total_volume,
+        fees_by_token=dict(fees_by_token),
+    )
 
 
 def _round(value: float, places: int = 2) -> float:
@@ -290,7 +327,9 @@ def _streaks(values: list[float]) -> tuple[int, int, int, int]:
     return best_win, best_loss, current_win, current_loss
 
 
-def _drawdown_duration(daily: list[tuple[str, float]]) -> tuple[int, bool]:
+def _drawdown_duration(
+    daily: list[tuple[str, float]], window_end: Date
+) -> tuple[int, bool]:
     cumulative = peak = 0.0
     peak_date = None
     started = None
@@ -307,9 +346,8 @@ def _drawdown_duration(daily: list[tuple[str, float]]) -> tuple[int, bool]:
         elif started is None:
             started = peak_date or current_date
     ongoing = started is not None
-    if ongoing and daily:
-        last_date = datetime.fromisoformat(daily[-1][0]).date()
-        longest = max(longest, (last_date - started).days)
+    if ongoing:
+        longest = max(longest, (window_end - started).days)
     return longest, ongoing
 
 
@@ -412,12 +450,13 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
     if len(products) != len(data.products):
         raise ValueError("products contains duplicate product_id values")
     trades = match(fills, products)
+    charges = _summarize_charges(fills, products)
     winners = [trade for trade in trades if trade.net_pnl > 0]
     losers = [trade for trade in trades if trade.net_pnl < 0]
     net_pnl = sum(trade.net_pnl for trade in trades)
     gross_pnl = sum(trade.pnl for trade in trades)
-    total_fees = sum(trade.fees for trade in trades)
-    total_volume = sum(trade.notional_value for trade in trades)
+    total_fees = charges.total_fees
+    total_volume = charges.total_volume
     win_rate = _rate(trades)
     avg_winner = _mean(trade.net_pnl for trade in winners)
     avg_loser = _mean(trade.net_pnl for trade in losers)
@@ -558,9 +597,6 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
         for index, name in enumerate(day_names)
     ]
 
-    maker_trades = [trade for trade in trades if trade.role == "maker"]
-    taker_trades = [trade for trade in trades if trade.role == "taker"]
-    maker_rate = len(maker_trades) / len(trades) * 100 if trades else 0
     fees_pct_pnl = total_fees / abs(gross_pnl) * 100 if gross_pnl else None
     fees_pct_volume = total_fees / total_volume * 100 if total_volume else None
     grade, score, dimensions = _grade(
@@ -569,7 +605,7 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
         profit_factor,
         payoff_ratio,
         sharpe if len(daily_values) >= 7 else None,
-        maker_rate,
+        charges.maker_fill_rate,
         fees_pct_pnl,
         fees_pct_volume,
         expectancy,
@@ -588,8 +624,8 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
     }
     fee_by_token = sorted(
         (
-            FeeToken(token=token, fees=_round(sum(trade.fees for trade in group)))
-            for token, group in by_underlying_group.items()
+            FeeToken(token=token, fees=_round(fees))
+            for token, fees in charges.fees_by_token.items()
         ),
         key=lambda item: item.fees,
         reverse=True,
@@ -600,7 +636,9 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
         if leak_item is not None and leak_item.pnl < 0
         else None
     )
-    duration, ongoing_drawdown = _drawdown_duration(daily_series)
+    duration, ongoing_drawdown = _drawdown_duration(
+        daily_series, data.window_end.astimezone(UTC).date()
+    )
     recovery_factor = net_pnl / abs(max_dd_amount) if max_dd_amount else None
     calmar = mean_daily * 365 / abs(max_dd_amount) if max_dd_amount else None
     risk = [
@@ -723,9 +761,9 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
         risk=risk,
         charges=Charges(
             total_fees=_round(total_fees),
-            maker_fees=_round(sum(trade.fees for trade in maker_trades)),
-            taker_fees=_round(sum(trade.fees for trade in taker_trades)),
-            maker_fill_rate=_round(maker_rate, 1),
+            maker_fees=_round(charges.maker_fees),
+            taker_fees=_round(charges.taker_fees),
+            maker_fill_rate=_round(charges.maker_fill_rate, 1),
             fees_pct_pnl=_round(fees_pct_pnl, 1) if fees_pct_pnl is not None else None,
             fees_pct_volume=(
                 _round(fees_pct_volume, 4) if fees_pct_volume is not None else None

@@ -46,7 +46,6 @@ class Lot:
     price: float
     fee: float
     opened_at: datetime
-    role: str
 
 
 @dataclass(frozen=True)
@@ -66,7 +65,6 @@ class Trade:
     net_pnl: float
     pnl_pct: float
     hold_duration_hours: float
-    role: str
 
 
 def _time(raw: str) -> datetime:
@@ -193,7 +191,6 @@ def match(fills: Iterable[Fill], products: dict[int, Product]) -> list[Trade]:
                         fill.created_at - lot.opened_at
                     ).total_seconds()
                     / 3600,
-                    role=lot.role,
                 )
             )
             remaining -= close_quantity
@@ -210,7 +207,6 @@ def match(fills: Iterable[Fill], products: dict[int, Product]) -> list[Trade]:
                     price=fill.price,
                     fee=exit_fee_per_unit * remaining,
                     opened_at=fill.created_at,
-                    role=fill.role,
                 )
             )
     return trades

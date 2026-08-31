@@ -141,8 +141,8 @@ the value with the observation count, or `n/a` under 7 days.
 
 ```
 fees_pct_pnl    = total_fees / abs(gross_pnl) * 100
-fees_pct_volume = total_fees / sum(notional_value) * 100
-maker_fill_rate = count(role == "maker") / len(trades) * 100
+fees_pct_volume = total_fees / sum(fill.size * contract_value * fill.price) * 100
+maker_fill_rate = count(fill.role == "maker") / len(fills) * 100
 gst_estimate    = max(total_fees, 0) * 0.18
 trades_to_cover = total_fees / expectancy          # n/a when fees or expectancy <= 0
 ```
@@ -150,8 +150,9 @@ trades_to_cover = total_fees / expectancy          # n/a when fees or expectancy
 `trades_to_cover` reads "at your current edge, N average trades pay for this
 window's fees". Print it when expectancy is positive.
 
-Split fees by maker and taker, by instrument (perpetuals vs options), and the
-top 10 underlyings by fee spend.
+Calculate charge totals from every fill, including fills that leave a position
+open. Split fees by each fill's maker or taker role and show the top 10
+underlyings by fee spend.
 
 `gst_estimate` is 18% Indian GST applied to exchange fees. It is an estimate,
 not a tax statement — label it that way. Delta's own baseline rates are 0.05%

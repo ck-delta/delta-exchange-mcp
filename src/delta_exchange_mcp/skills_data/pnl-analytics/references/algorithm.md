@@ -28,7 +28,7 @@ Sort all fills ascending by `created_at`. Hold a FIFO queue of entry lots per
 `product_id`:
 
 ```
-lot = {signed_size, entry_price, remaining_entry_fee, opened_at, role}
+lot = {signed_size, entry_price, remaining_entry_fee, opened_at}
 ```
 
 `size` is signed: positive long, negative short. For each fill:
@@ -83,7 +83,6 @@ Emit one round trip:
 | `net_pnl` | `pnl - fees` |
 | `pnl_pct` | `pnl / notional_value * 100`, or 0 when notional is 0 |
 | `hold_duration_hours` | `(exit_time - entry_time) / 3600` |
-| `role` | the position's role, one of `maker` / `taker` |
 
 ## 3. Known limits of this method
 

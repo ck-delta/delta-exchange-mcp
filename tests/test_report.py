@@ -93,6 +93,32 @@ def test_fifo_preserves_negative_maker_commission_as_a_rebate() -> None:
     assert trades[0].net_pnl == 52
 
 
+def test_charges_use_each_fill_role_and_include_open_fill_fees(tmp_path: Path) -> None:
+    fills = [
+        fill("buy", 100, 0, fee=1),
+        Fill(
+            product_id=27,
+            product_symbol="BTCUSD",
+            quantity=1,
+            side="sell",
+            price=120,
+            fee=9,
+            created_at=START + timedelta(hours=1),
+            role="taker",
+        ),
+        fill("buy", 110, 2, fee=2),
+    ]
+
+    report = calculate(report_input(tmp_path), fills)
+
+    assert report.headline.total_fees == 12
+    assert report.charges.total_fees == 12
+    assert report.charges.maker_fees == 3
+    assert report.charges.taker_fees == 9
+    assert report.charges.maker_fill_rate == 66.7
+    assert report.charges.by_token[0].fees == 12
+
+
 def test_fifo_close_can_span_lots_and_flip_direction() -> None:
     closing = Fill(
         product_id=27,
@@ -139,6 +165,22 @@ def test_missing_product_contract_fails_instead_of_assuming_one(
 ) -> None:
     with pytest.raises(ValueError, match="no product contract"):
         calculate(report_input(tmp_path, products=[]), [fill("buy", 100, 0)])
+
+
+def test_ongoing_drawdown_duration_runs_through_window_end(tmp_path: Path) -> None:
+    report = calculate(
+        report_input(tmp_path, window_end=START + timedelta(days=30)),
+        [
+            fill("buy", 100, 0, fee=0),
+            fill("sell", 110, 1, fee=0),
+            fill("buy", 100, 24, fee=0),
+            fill("sell", 95, 25, fee=0),
+        ],
+    )
+
+    duration = next(item for item in report.risk if item.label == "Longest drawdown")
+    assert duration.value == "30 days"
+    assert duration.note == "ongoing at window end"
 
 
 def test_cli_validates_and_writes_the_versioned_report_and_dashboard(
