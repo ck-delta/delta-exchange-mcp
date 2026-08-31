@@ -323,6 +323,92 @@ def test_report_dates_use_utc_at_offset_aware_window_boundary(
     assert report.meta.generated == "2026-01-02"
 
 
+def test_offset_aware_fills_use_utc_for_all_calendar_axes(tmp_path: Path) -> None:
+    eth = Product(
+        product_id=28,
+        symbol="ETHUSD",
+        underlying="ETH",
+        contract_type="perpetual_futures",
+        contract_value=1,
+    )
+    first_btc_close = datetime.fromisoformat("2026-02-01T00:30:00+05:30")
+    first_eth_close = datetime.fromisoformat("2026-01-31T23:30:00+05:30")
+    window_start = first_eth_close - timedelta(minutes=30)
+    window_end = first_btc_close + timedelta(days=4)
+    fills = []
+    for index in range(5):
+        for product, close_time in (
+            (PRODUCT, first_btc_close + timedelta(days=index)),
+            (eth, first_eth_close + timedelta(days=index)),
+        ):
+            fills.extend(
+                [
+                    Fill(
+                        product_id=product.product_id,
+                        product_symbol=product.symbol,
+                        quantity=1,
+                        side="buy",
+                        price=100,
+                        fee=0,
+                        created_at=close_time - timedelta(minutes=30),
+                        role="maker",
+                    ),
+                    Fill(
+                        product_id=product.product_id,
+                        product_symbol=product.symbol,
+                        quantity=1,
+                        side="sell",
+                        price=101 + index,
+                        fee=0,
+                        created_at=close_time,
+                        role="maker",
+                    ),
+                ]
+            )
+
+    report = calculate(
+        report_input(
+            tmp_path,
+            window_start=window_start,
+            window_end=window_end,
+            generated_at=window_end,
+            products=[PRODUCT, eth],
+            funding=[],
+        ),
+        fills,
+    )
+
+    utc_dates = [
+        "2026-01-31",
+        "2026-02-01",
+        "2026-02-02",
+        "2026-02-03",
+        "2026-02-04",
+    ]
+    assert report.meta.window == "2026-01-31 to 2026-02-04"
+    assert report.meta.fills == 20
+    assert report.meta.trades == 10
+    assert [item.date for item in report.daily] == utc_dates
+    assert [item.date for item in report.drawdown] == utc_dates
+    assert report.equity[0].date == "2026-01-31T18:00:00+00:00"
+    assert report.equity[-1].date == "2026-02-04T19:00:00+00:00"
+    assert [(item.month, item.trades) for item in report.monthly] == [
+        ("2026-01", 2),
+        ("2026-02", 8),
+    ]
+    assert [item.hour for item in report.hourly if item.trades] == [18, 19]
+    assert {item.day: item.trades for item in report.day_of_week if item.trades} == {
+        "Mon": 2,
+        "Tue": 2,
+        "Wed": 2,
+        "Sat": 2,
+        "Sun": 2,
+    }
+    assert report.correlation is not None
+    assert report.correlation.tokens == ["ETH", "BTC"]
+    assert report.correlation.matrix == [[1.0, 1.0], [1.0, 1.0]]
+
+
 def test_post_window_recovery_cannot_change_drawdown_or_headline(
     tmp_path: Path,
 ) -> None:

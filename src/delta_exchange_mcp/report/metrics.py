@@ -4,7 +4,7 @@ import math
 import statistics
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date as Date, datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal
 
@@ -511,7 +511,11 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
     products = {product.product_id: product for product in data.products}
     if len(products) != len(data.products):
         raise ValueError("products contains duplicate product_id values")
-    context_fills = [fill for fill in fills if fill.created_at <= data.window_end]
+    context_fills = [
+        replace(fill, created_at=fill.created_at.astimezone(UTC))
+        for fill in fills
+        if fill.created_at <= data.window_end
+    ]
     window_fills = [
         fill for fill in context_fills if fill.created_at >= data.window_start
     ]
