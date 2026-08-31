@@ -85,6 +85,11 @@ def _round(value: float, places: int = 2) -> float:
     return round(value, places)
 
 
+def _in_window(timestamp: datetime, data: ReportInput) -> bool:
+    """Return whether an aware timestamp is inside the inclusive report window."""
+    return data.window_start <= timestamp <= data.window_end
+
+
 def _reconcile_charges(
     values: dict[str, float], total: float
 ) -> tuple[float, dict[str, float]]:
@@ -410,6 +415,8 @@ def _funding(
     by_token: dict[str, list[float]] = defaultdict(list)
     by_date: dict[str, float] = defaultdict(float)
     for item in data.funding:
+        if not _in_window(item.created_at, data):
+            continue
         if item.underlying:
             token = item.underlying
         else:
@@ -500,8 +507,16 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
     products = {product.product_id: product for product in data.products}
     if len(products) != len(data.products):
         raise ValueError("products contains duplicate product_id values")
-    trades = match(fills, products)
-    charges = _summarize_charges(fills, products)
+    context_fills = [fill for fill in fills if fill.created_at <= data.window_end]
+    window_fills = [
+        fill for fill in context_fills if fill.created_at >= data.window_start
+    ]
+    trades = [
+        trade
+        for trade in match(context_fills, products)
+        if _in_window(trade.exit_time, data)
+    ]
+    charges = _summarize_charges(window_fills, products)
     winners = [trade for trade in trades if trade.net_pnl > 0]
     losers = [trade for trade in trades if trade.net_pnl < 0]
     net_pnl = sum(trade.net_pnl for trade in trades)
@@ -771,7 +786,7 @@ def calculate(data: ReportInput, fills: list[Fill]) -> Report:
                 f"{data.window_start.date().isoformat()} to "
                 f"{data.window_end.date().isoformat()}"
             ),
-            fills=len(fills),
+            fills=len(window_fills),
             trades=len(trades),
         ),
         headline=Headline(

@@ -8,7 +8,12 @@ from typing import Any
 import pytest
 
 from delta_exchange_mcp.report.cli import render_dashboard, run
-from delta_exchange_mcp.report.contract import INPUT_VERSION, Product, ReportInput
+from delta_exchange_mcp.report.contract import (
+    Funding,
+    INPUT_VERSION,
+    Product,
+    ReportInput,
+)
 from delta_exchange_mcp.report.fifo import Fill, match
 from delta_exchange_mcp.report.metrics import calculate
 
@@ -209,6 +214,110 @@ def test_missing_product_contract_fails_instead_of_assuming_one(
 ) -> None:
     with pytest.raises(ValueError, match="no product contract"):
         calculate(report_input(tmp_path, products=[]), [fill("buy", 100, 0)])
+
+
+def test_report_window_uses_earlier_fills_only_as_fifo_context(
+    tmp_path: Path,
+) -> None:
+    window_end = START + timedelta(days=1)
+    fills = [
+        Fill(
+            product_id=27,
+            product_symbol="BTCUSD",
+            quantity=1,
+            side="buy",
+            price=100,
+            fee=1,
+            created_at=START - timedelta(hours=1),
+            role="maker",
+        ),
+        Fill(
+            product_id=27,
+            product_symbol="BTCUSD",
+            quantity=1,
+            side="sell",
+            price=110,
+            fee=2,
+            created_at=START,
+            role="taker",
+        ),
+        Fill(
+            product_id=27,
+            product_symbol="BTCUSD",
+            quantity=1,
+            side="buy",
+            price=200,
+            fee=3,
+            created_at=window_end,
+            role="maker",
+        ),
+        Fill(
+            product_id=27,
+            product_symbol="BTCUSD",
+            quantity=1,
+            side="sell",
+            price=220,
+            fee=4,
+            created_at=window_end + timedelta(microseconds=1),
+            role="taker",
+        ),
+    ]
+    funding = [
+        Funding(
+            amount=-100,
+            created_at=START - timedelta(microseconds=1),
+            underlying="BTC",
+        ),
+        Funding(amount=-2, created_at=START, underlying="BTC"),
+        Funding(amount=3, created_at=window_end, underlying="BTC"),
+        Funding(
+            amount=100,
+            created_at=window_end + timedelta(microseconds=1),
+            product_id=999,
+        ),
+    ]
+
+    report = calculate(
+        report_input(tmp_path, window_end=window_end, funding=funding),
+        fills,
+    )
+
+    assert report.meta.fills == 2
+    assert report.meta.trades == 1
+    assert report.headline.net_pnl == 7
+    assert report.headline.total_fees == 5
+    assert report.headline.funding == 1
+    assert report.headline.net_including_funding == 8
+    assert report.charges.maker_fees == 3
+    assert report.charges.taker_fees == 2
+    assert report.charges.maker_fill_rate == 50
+    assert report.funding is not None
+    assert report.funding.by_token[0].count == 2
+
+
+def test_post_window_recovery_cannot_change_drawdown_or_headline(
+    tmp_path: Path,
+) -> None:
+    fills = []
+    for day, pnl in [(0, 10), (1, -5), (10, 5)]:
+        fills.extend(
+            [
+                fill("buy", 100, day * 24, fee=0),
+                fill("sell", 100 + pnl, day * 24 + 1, fee=0),
+            ]
+        )
+
+    report = calculate(
+        report_input(tmp_path, window_end=START + timedelta(days=5)),
+        fills,
+    )
+
+    duration = next(item for item in report.risk if item.label == "Longest drawdown")
+    assert report.meta.fills == 4
+    assert report.meta.trades == 2
+    assert report.headline.net_pnl == 5
+    assert duration.value == "5 days"
+    assert duration.note == "ongoing at window end"
 
 
 @pytest.mark.parametrize(

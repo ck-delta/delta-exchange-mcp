@@ -46,6 +46,10 @@ calculation. `fills_csv` is relative to the input file unless it is absolute.
 The fill CSV must contain `product_id`, `product_symbol`, `size`, `side`,
 `price`, `commission`, `created_at`, and `role`. `created_at` accepts an ISO 8601
 timestamp or a Unix timestamp in seconds, milliseconds, or microseconds.
+The report window is inclusive. Fills before `window_start` are used only to
+reconstruct FIFO lots for positions that close inside the window. Fill counts,
+charges, funding, and realized trades include only activity from `window_start`
+through `window_end`; later activity is ignored.
 
 Each product used by a fill or funding transaction must have one product entry.
 The calculator fails if a contract value is missing. It never assumes a contract
