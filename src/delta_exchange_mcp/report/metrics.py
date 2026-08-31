@@ -330,25 +330,34 @@ def _streaks(values: list[float]) -> tuple[int, int, int, int]:
 def _drawdown_duration(
     daily: list[tuple[str, float]], window_end: Date
 ) -> tuple[int, bool]:
+    """Return the longest duration and whether a selected longest interval is current.
+
+    An ongoing interval wins a tie because one maximum-duration drawdown is still
+    active at the report window end.
+    """
     cumulative = peak = 0.0
     peak_date = None
     started = None
-    longest = 0
+    longest_recovered = 0
     for date, pnl in daily:
         current_date = datetime.fromisoformat(date).date()
         cumulative += pnl
         if cumulative >= peak:
             if started is not None:
-                longest = max(longest, (current_date - started).days)
+                longest_recovered = max(
+                    longest_recovered, (current_date - started).days
+                )
             peak = cumulative
             peak_date = current_date
             started = None
         elif started is None:
             started = peak_date or current_date
-    ongoing = started is not None
-    if ongoing:
-        longest = max(longest, (window_end - started).days)
-    return longest, ongoing
+    if started is None:
+        return longest_recovered, False
+    ongoing_duration = (window_end - started).days
+    if ongoing_duration >= longest_recovered:
+        return ongoing_duration, True
+    return longest_recovered, False
 
 
 def _funding(

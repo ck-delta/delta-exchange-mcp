@@ -167,20 +167,53 @@ def test_missing_product_contract_fails_instead_of_assuming_one(
         calculate(report_input(tmp_path, products=[]), [fill("buy", 100, 0)])
 
 
-def test_ongoing_drawdown_duration_runs_through_window_end(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("daily_pnl", "window_days", "expected_days", "expected_note"),
+    [
+        (
+            [(0, 10), (1, -5), (10, 5), (18, 1), (19, -1)],
+            19,
+            10,
+            None,
+        ),
+        (
+            [(0, 10), (1, -5), (2, 5), (3, 1), (4, -1)],
+            10,
+            7,
+            "ongoing at window end",
+        ),
+        (
+            [(0, 10), (1, -5), (5, 5), (6, 1), (7, -1)],
+            11,
+            5,
+            "ongoing at window end",
+        ),
+    ],
+    ids=["recovered-longer", "ongoing-longer", "ongoing-wins-tie"],
+)
+def test_longest_drawdown_selects_the_interval_reported_as_ongoing(
+    tmp_path: Path,
+    daily_pnl: list[tuple[int, float]],
+    window_days: int,
+    expected_days: int,
+    expected_note: str | None,
+) -> None:
+    fills = []
+    for day, pnl in daily_pnl:
+        fills.extend(
+            [
+                fill("buy", 100, day * 24, fee=0),
+                fill("sell", 100 + pnl, day * 24 + 1, fee=0),
+            ]
+        )
     report = calculate(
-        report_input(tmp_path, window_end=START + timedelta(days=30)),
-        [
-            fill("buy", 100, 0, fee=0),
-            fill("sell", 110, 1, fee=0),
-            fill("buy", 100, 24, fee=0),
-            fill("sell", 95, 25, fee=0),
-        ],
+        report_input(tmp_path, window_end=START + timedelta(days=window_days)),
+        fills,
     )
 
     duration = next(item for item in report.risk if item.label == "Longest drawdown")
-    assert duration.value == "30 days"
-    assert duration.note == "ongoing at window end"
+    assert duration.value == f"{expected_days} days"
+    assert duration.note == expected_note
 
 
 def test_cli_validates_and_writes_the_versioned_report_and_dashboard(
