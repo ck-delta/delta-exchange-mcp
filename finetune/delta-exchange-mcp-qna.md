@@ -293,11 +293,11 @@ Delta requires a User-Agent header. A missing one returns HTTP 403. The server a
 
 ### 49. Do my API keys leave my machine?
 
-No. The server runs as a local stdio subprocess of your client, and your keys stay on your machine. There is no shared hosted endpoint that could receive them.
+The server sends your API key directly to Delta over HTTPS in an authenticated request header. Your API secret stays on your machine and signs each request locally. Neither credential passes through the AI model or a shared MCP endpoint.
 
 ### 50. Does the AI model ever see my credentials?
 
-No. Credentials are read from your local environment and used only to sign requests to Delta. They are not sent through the AI model and are never written to the debug or audit logs.
+No. The server reads both credentials from your local environment outside the AI model. It sends the API key directly to Delta over HTTPS and uses the API secret locally to sign requests. Neither credential is written to the debug or audit logs.
 
 ### 51. How do I register the account read-only tools?
 
@@ -335,7 +335,7 @@ Set DELTA_MCP_AUDIT to off, false, 0, or no. This kill switch disables the tradi
 
 ### 59. Does the server retry a failed mutation?
 
-No. Unlike GET reads, mutations are never auto-retried on timeout or rate-limit. A failure is surfaced, not silently re-sent, so you never place a duplicate order by accident.
+The server retries transport errors, including timeouts, up to three total attempts for every HTTP method. A mutation can therefore reach Delta more than once when a response is lost. It does not retry mutation responses with HTTP 429 or 5xx status. If the final transport attempt fails, check open orders, order history, or the relevant account state before you retry manually.
 
 ### 60. Can the server withdraw funds?
 
@@ -741,7 +741,7 @@ Run `uv run python scripts/smoke.py`. It hits the real environment set in DELTA_
 
 ### 158. How does the server handle rate limits?
 
-On HTTP 429, GET requests back off using the X-RATE-LIMIT-RESET header in milliseconds. On 5xx, GET requests use exponential backoff. Only GET is retried; POST, PUT, and DELETE mutations never auto-retry.
+On HTTP 429, GET requests back off using the X-RATE-LIMIT-RESET header in milliseconds. On 5xx, GET requests use exponential backoff. POST, PUT, and DELETE responses are not retried for either status. Transport errors are separate: the server retries them up to three total attempts for every HTTP method.
 
 ### 159. How does the server surface a Delta API error?
 
