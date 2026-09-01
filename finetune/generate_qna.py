@@ -137,9 +137,9 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I sanity-check the install?",
-                "Run `uvx delta-exchange-mcp --help`. uvx resolves the latest published version from "
-                "PyPI and prints the CLI help. This confirms uv works and the package downloads before "
-                "you wire it into a client.",
+                "Run `uvx delta-exchange-mcp --help`. uvx resolves the package from PyPI or uses its "
+                "cached resolution, then prints the CLI help. This confirms uv works and the package "
+                "starts before you wire it into a client.",
             ),
             (
                 "How do I add the server to Claude Code?",
@@ -169,6 +169,13 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
                 "account access after the server starts.",
             ),
             (
+                "How do I add the server to OpenClaw?",
+                "Run `openclaw mcp add delta-exchange-mcp --command uvx --arg "
+                "delta-exchange-mcp`. Repeat `--arg` once per argument. OpenClaw writes the entry under "
+                "`mcp.servers` in `~/.openclaw/openclaw.json`. Keep credentials out of the install "
+                "command and configure account access after the server starts.",
+            ),
+            (
                 "How do I add the server to Windsurf?",
                 "Edit `~/.codeium/windsurf/mcp_config.json` (macOS/Linux) or the Windows equivalent "
                 "under `%USERPROFILE%`. Use an mcpServers entry with command `uvx` and args "
@@ -178,9 +185,16 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             (
                 "How do I add the server to Zed?",
                 "Edit `~/.config/zed/settings.json` (user) or `.zed/settings.json` (project). Zed uses "
-                'the top-level key `context_servers` and nests `command` as an object:\n\n```json\n{\n  "context_servers": {\n    "delta-exchange-mcp": {\n      "command": {\n        "path": "uvx",\n        "args": ["delta-exchange-mcp"]\n      }\n    }\n  }\n}\n```\n\n'
-                "Note the shape difference from other clients: the key is context_servers and command "
-                "is an object with a path field. Configure credentials after the server starts.",
+                'the top-level key `context_servers`:\n\n```json\n{\n  "context_servers": {\n    "delta-exchange-mcp": {\n      "command": "uvx",\n      "args": ["delta-exchange-mcp"]\n    }\n  }\n}\n```\n\n'
+                "The entry itself uses the usual flat command and args fields. Configure credentials "
+                "after the server starts.",
+            ),
+            (
+                "How do I add the server to Google Antigravity?",
+                "Add a credential-free mcpServers entry with command `uvx` and args "
+                "`[\"delta-exchange-mcp\"]` to `~/.gemini/config/mcp_config.json`. In the IDE, open the "
+                "agent panel menu, then MCP Servers, Manage MCP Servers, and View raw config. Prefer the "
+                "global file because project-level entries can be ignored, then reopen the MCP panel.",
             ),
             (
                 "How do I add the server to VS Code with GitHub Copilot?",
@@ -219,8 +233,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I pin a specific version?",
-                'Pin the version in the uvx invocation: `uvx "delta-exchange-mcp==0.2.0"`. Without a '
-                "pin, uvx floats to the latest published PyPI version on each launch.",
+                'Pin the version in the uvx invocation: `uvx "delta-exchange-mcp==0.6.0"`. Use 0.4.2 '
+                "or newer because earlier releases do not start with the current MCP dependency. "
+                "Without a pin, uvx can keep a cached resolution; use `uvx --refresh "
+                "delta-exchange-mcp --help` when you want it to resolve the newest release.",
             ),
             (
                 "How do I run an unreleased branch or fork?",
@@ -279,10 +295,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Which clients does the server support?",
-                "Claude Code, Cursor, Codex, Windsurf, Zed, VS Code with GitHub Copilot, and Claude "
-                "Desktop. Editor clients normally launch a local `uvx delta-exchange-mcp` subprocess. "
-                "Claude Desktop can instead install the MCP bundle, which fetches its own runtime and "
-                "collects configuration through a form.",
+                "Claude Code, Cursor, Codex, OpenClaw, Windsurf, Zed, Google Antigravity, VS Code with "
+                "GitHub Copilot, and Claude Desktop. Editor clients normally launch a local "
+                "`uvx delta-exchange-mcp` subprocess. Claude Desktop can instead install the MCP "
+                "bundle, which fetches its own runtime and collects configuration through a form.",
             ),
         ],
     ),
@@ -309,8 +325,9 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Should I whitelist my IP on the key?",
-                "Yes, whitelisting your IP is recommended. Delta blocks non-whitelisted IPs. When the "
-                "block fires, the error surfaces your current IP so you can add it in API management.",
+                "A read-only key needs no IP whitelist. Delta requires an IP whitelist when the key has "
+                "Trading permission. If a key carries a whitelist, Delta blocks requests from other "
+                "addresses and the server reports the IP that Delta saw so you can correct the key.",
             ),
             (
                 "How do I match the key to the environment?",
@@ -371,6 +388,21 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
                 "session; the other routes may need a connection-status check or client restart.",
             ),
             (
+                "What does setup_credentials do?",
+                "setup_credentials opens the in-chat form for connecting or rotating an account and for "
+                "turning trade mode on or off for the current client. Call it before asking the user to "
+                "use a terminal. The user types the key inside the form, outside the conversation. If "
+                "the client cannot render the form, the tool returns the login-command and shared-file "
+                "fallbacks. Never ask the user to paste a key or secret into chat.",
+            ),
+            (
+                "Can the assistant call save_credentials or save_mode?",
+                "No. save_credentials and save_mode are app-only tools called by the credential form, "
+                "not by the assistant. Their schemas are hidden from the model, and each save also needs "
+                "a short-lived, one-use grant bound to the protocol session that opened the form. The "
+                "assistant calls setup_credentials instead.",
+            ),
+            (
                 "What happens without credentials?",
                 "Without an API key and secret, the 14 public market-data tools and the connection and "
                 "credential-setup tools remain available. The account and trading tools stay off, so "
@@ -383,8 +415,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             (
                 "Is the server read-only by default?",
-                "Yes. Trading tools register only with the explicit DELTA_MCP_MODE=trade opt-in. "
-                "Without it, every tool is a GET and the server cannot place, edit, or cancel orders.",
+                "Yes. Trading tools register only when the current client's effective mode is trade. "
+                "The credential form stores that choice for one client, or the client can set "
+                "DELTA_MCP_MODE=trade itself. Otherwise every Delta API operation is a GET and the "
+                "server cannot place, edit, or cancel orders.",
             ),
             (
                 "How do I enable trading?",
@@ -415,7 +449,8 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             (
                 "How do I disable the audit log?",
                 "Set DELTA_MCP_AUDIT to off, false, 0, or no. This kill switch disables the trading "
-                "audit log. The log is on by default whenever DELTA_MCP_MODE=trade.",
+                "audit log. The log is on by default whenever the current client's effective mode is "
+                "trade.",
             ),
             (
                 "Does the server retry a failed mutation?",
@@ -469,17 +504,21 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             (
                 "What does DELTA_API_KEY do?",
                 "DELTA_API_KEY holds your API key. It is optional. When set together with "
-                "DELTA_API_SECRET, the account read-only tools register. Alone it does nothing.",
+                "DELTA_API_SECRET, the account read-only tools register. If only one half is set, the "
+                "server stays on market data and prints which matching half is missing.",
             ),
             (
                 "What does DELTA_API_SECRET do?",
                 "DELTA_API_SECRET holds the API secret that matches DELTA_API_KEY. The server uses it "
-                "to sign authenticated requests. It is optional and pairs with DELTA_API_KEY.",
+                "to sign authenticated requests. It is optional and pairs with DELTA_API_KEY. A secret "
+                "without its key produces the same partial-credential warning and no account tools.",
             ),
             (
                 "What does DELTA_MCP_MODE do?",
-                "DELTA_MCP_MODE selects read or trade. The default read is read-only. Setting trade "
-                "registers the trading tools and requires a valid API key and secret.",
+                "DELTA_MCP_MODE selects read or trade in one client's own environment. The default read "
+                "is read-only. Setting trade registers the trading tools and requires a valid API key "
+                "and secret. The in-chat form uses a separate client-scoped setting instead, so it does "
+                "not turn on trading in every client on the machine.",
             ),
             (
                 "What does DELTA_MCP_DEBUG do?",
@@ -502,6 +541,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
                 "`~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`.",
             ),
             (
+                "What does DELTA_MCP_CONFIG_FILE do?",
+                "DELTA_MCP_CONFIG_FILE moves the shared settings file from its default path, "
+                "`~/.delta-exchange-mcp/config.env`. Set this override in the client's process "
+                "environment because a settings file cannot relocate itself.",
+            ),
+            (
                 "Which environment variables are required?",
                 "None are strictly required. The server runs public market data with no variables set. "
                 "Set DELTA_MCP_ENV to change environment, DELTA_API_KEY plus DELTA_API_SECRET for "
@@ -509,8 +554,9 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "What is the default environment?",
-                "The default DELTA_MCP_ENV is india_prod. It also defaults DELTA_MCP_MODE to read, so a "
-                "server with no env vars set serves public production market data in read-only mode.",
+                "The default DELTA_MCP_ENV is india_prod and the default mode is read. If neither the "
+                "client nor the shared settings file overrides them, the server provides public "
+                "production market data and no trading tools.",
             ),
         ],
     ),
@@ -763,9 +809,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             (
                 "When do the trading tools register?",
-                "The trading tools register only when DELTA_MCP_MODE=trade is set alongside valid "
-                "credentials. Without the opt-in the server stays read-only and the trading tools do "
-                "not appear.",
+                "The trading tools register only when valid credentials exist and the current client's "
+                "effective mode is trade. The mode can come from that client's own DELTA_MCP_MODE or "
+                "from the client-scoped setting written by the credential form. Without this opt-in the "
+                "server stays read-only and the trading tools do not appear.",
             ),
             (
                 "What does place_order do?",
@@ -932,9 +979,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             (
                 "How do I turn on debug logging?",
-                "Set DELTA_MCP_DEBUG=1 in your client env block, restart the client, and re-run the "
-                "action. Each HTTP call, its request URL with filter params, response body, and status "
-                "logs to `~/.delta-exchange-mcp/logs/`. The exact path prints on startup.",
+                "Set DELTA_MCP_DEBUG=1 in the shared settings file or in one client's environment, "
+                "restart the client, and re-run the action. Each HTTP call, its request URL with filter "
+                "params, response body, and status logs to `~/.delta-exchange-mcp/logs/`. The exact path "
+                "prints on startup.",
             ),
             (
                 "Where is the debug log?",
@@ -957,6 +1005,14 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
                 "What does get_trading_status do?",
                 "get_trading_status reports {mode, audit_log_path}. It registers only in trade mode. "
                 "Ask the assistant where the audit log is and it calls this tool.",
+            ),
+            (
+                "What does get_connection_status do?",
+                "get_connection_status is always available. It reconciles safe changes to the shared "
+                "settings file, then reports the environment, whether credentials and account tools are "
+                "ready, the current and next-session modes, whether a restart is needed, any client "
+                "overrides, the self-reported client name and scoped mode setting, the package version, "
+                "and the credential-view build. It never returns a key, secret, or credential fingerprint.",
             ),
             (
                 "How do I fix a SignatureExpired error?",

@@ -11,6 +11,14 @@ ARTIFACTS = ("delta-exchange-mcp-qna.md", "delta-exchange-mcp-qna.jsonl")
 CREDENTIAL_ASSIGNMENT = re.compile(
     r"[\"']?DELTA_API_(?:KEY|SECRET)[\"']?\s*(?:=|:)"
 )
+CONTROL_TOOLS = {
+    "get_connection_status",
+    "get_debug_status",
+    "get_trading_status",
+    "save_credentials",
+    "save_mode",
+    "setup_credentials",
+}
 
 
 def test_generated_finetune_artifacts_match_source(tmp_path: Path) -> None:
@@ -39,3 +47,14 @@ def test_install_answers_do_not_embed_credentials() -> None:
         answer = record["messages"][-1]["content"]
         assert not CREDENTIAL_ASSIGNMENT.search(answer)
         assert "your-api-" not in answer.lower()
+
+
+def test_control_tools_have_training_coverage() -> None:
+    path = ROOT / "finetune" / "delta-exchange-mcp-qna.jsonl"
+    questions = {
+        json.loads(line)["messages"][-2]["content"]
+        for line in path.read_text(encoding="utf-8").splitlines()
+    }
+
+    for tool in CONTROL_TOOLS:
+        assert any(tool in question for question in questions)
