@@ -49,16 +49,17 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "What do I get with this server?",
-                "You get 14 public market-data tools and 13 authenticated read-only account tools. "
-                "You also get 13 trading tools that place, edit, and cancel orders, but they are off "
-                "by default. Market-data tools always work. Account tools register when you set an "
-                "API key and secret. Trading tools register only when you also set DELTA_MCP_MODE=trade.",
+                "The packaged manifest declares 46 tools. The core surface has 14 public market-data "
+                "tools, 13 authenticated read-only account tools, and 13 opt-in trading tools. Six "
+                "more tools handle credential setup and connection, debug, and trading status. Market "
+                "data always works. Account tools need an API key and secret. Trading tools also need "
+                "trade mode for the current client.",
             ),
             (
                 "How many tools does the server have?",
-                "The server has 40 tools in total: 14 public market-data tools, 13 authenticated "
-                "read-only account tools, and 13 opt-in trading tools. Two extra status tools, "
-                "get_debug_status and get_trading_status, register only when debug or trade mode is on.",
+                "The packaged manifest declares 46 tools. This includes 40 market, account, and "
+                "trading tools plus six setup and status tools. The active list depends on whether "
+                "credentials, debug logging, and trade mode are enabled.",
             ),
             (
                 "Which exchange does the server support?",
@@ -80,9 +81,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How is the server distributed?",
-                "The server is distributed as a PyPI package named delta-exchange-mcp. You run it with "
-                "uvx, which resolves the latest published version on each launch. There is no Docker "
-                "image and no hosted endpoint.",
+                "The server is distributed as the delta-exchange-mcp package on PyPI and as a Claude "
+                "Desktop MCP bundle. Editor clients normally launch the PyPI package with uvx. The "
+                "Claude Desktop bundle installs its own uv and Python runtime. There is no Docker image "
+                "or hosted endpoint.",
             ),
             (
                 "What transport does the server use?",
@@ -129,8 +131,9 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             (
                 "What do I need before I install?",
-                "You need uv installed on your machine. uv provides the uvx command that launches the "
-                "server. Install uv from the Astral docs, then continue with the client setup.",
+                "For Claude Desktop, download and open the MCP bundle; it fetches uv and Python, so you "
+                "do not install either one first. For an editor or a manual client configuration, "
+                "install uv from the Astral docs so the client can launch the server with uvx.",
             ),
             (
                 "How do I sanity-check the install?",
@@ -140,9 +143,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I add the server to Claude Code?",
-                "Run:\n\n```bash\nclaude mcp add delta-exchange-mcp \\\n  --scope user \\\n  --env DELTA_MCP_ENV=india_prod \\\n  --env DELTA_API_KEY=your-api-key \\\n  --env DELTA_API_SECRET=your-api-secret \\\n  -- uvx delta-exchange-mcp\n```\n\n"
-                "`--scope user` makes the server available across all projects. The API key and secret "
-                "are optional; drop them for public-data-only mode. Verify with `claude mcp list`.",
+                "Run:\n\n```bash\nclaude mcp add delta-exchange-mcp \\\n  --scope user -- uvx delta-exchange-mcp\n```\n\n"
+                "`--scope user` makes the server available across all projects. Keep credentials out "
+                "of this install command. Verify with `claude mcp list`, restart the client, and then "
+                "use the credential form, login command, or shared configuration file for account access.",
             ),
             (
                 "How do I verify the server in Claude Code?",
@@ -152,39 +156,45 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             (
                 "How do I add the server to Cursor?",
                 "Edit `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` in the repo root "
-                '(project-scoped) and add an mcpServers entry:\n\n```json\n{\n  "mcpServers": {\n    "delta-exchange-mcp": {\n      "command": "uvx",\n      "args": ["delta-exchange-mcp"],\n      "env": {\n        "DELTA_MCP_ENV": "india_prod",\n        "DELTA_API_KEY": "your-api-key",\n        "DELTA_API_SECRET": "your-api-secret"\n      }\n    }\n  }\n}\n```\n\n'
-                "Restart Cursor or open Settings then Tools & MCP to refresh.",
+                '(project-scoped) and add an mcpServers entry:\n\n```json\n{\n  "mcpServers": {\n    "delta-exchange-mcp": {\n      "command": "uvx",\n      "args": ["delta-exchange-mcp"]\n    }\n  }\n}\n```\n\n'
+                "The README also has an Add to Cursor button. Keep credentials out of the normal "
+                "install entry. Restart Cursor or open Settings then Tools & MCP to refresh, and then "
+                "configure account access through a supported credential route.",
             ),
             (
                 "How do I add the server to Codex?",
-                'Add this to `~/.codex/config.toml`:\n\n```toml\n[mcp_servers.delta-exchange-mcp]\ncommand = "uvx"\nargs = ["delta-exchange-mcp"]\nenv = { DELTA_MCP_ENV = "india_prod", DELTA_API_KEY = "your-api-key", DELTA_API_SECRET = "your-api-secret" }\n```\n\n'
-                "Codex uses TOML, not JSON. The API key and secret are optional.",
+                "Run `codex mcp add delta-exchange-mcp -- uvx delta-exchange-mcp`, then verify with "
+                "`codex mcp list`. A manual `~/.codex/config.toml` entry needs only command `uvx` and "
+                "args `[\"delta-exchange-mcp\"]`. Leave its environment variables empty and configure "
+                "account access after the server starts.",
             ),
             (
                 "How do I add the server to Windsurf?",
                 "Edit `~/.codeium/windsurf/mcp_config.json` (macOS/Linux) or the Windows equivalent "
-                "under `%USERPROFILE%`. Use the same mcpServers JSON shape as Cursor. The UI route is "
-                "Settings then Cascade then Plugins (MCP servers) then Manage Plugins then View raw "
-                "config.",
+                "under `%USERPROFILE%`. Use an mcpServers entry with command `uvx` and args "
+                "`[\"delta-exchange-mcp\"]`; do not add a credential env block. The UI route is Settings "
+                "then Cascade then Plugins (MCP servers) then Manage Plugins then View raw config.",
             ),
             (
                 "How do I add the server to Zed?",
                 "Edit `~/.config/zed/settings.json` (user) or `.zed/settings.json` (project). Zed uses "
-                'the top-level key `context_servers` and nests `command` as an object:\n\n```json\n{\n  "context_servers": {\n    "delta-exchange-mcp": {\n      "command": {\n        "path": "uvx",\n        "args": ["delta-exchange-mcp"],\n        "env": {\n          "DELTA_MCP_ENV": "india_prod",\n          "DELTA_API_KEY": "your-api-key",\n          "DELTA_API_SECRET": "your-api-secret"\n        }\n      }\n    }\n  }\n}\n```\n\n'
+                'the top-level key `context_servers` and nests `command` as an object:\n\n```json\n{\n  "context_servers": {\n    "delta-exchange-mcp": {\n      "command": {\n        "path": "uvx",\n        "args": ["delta-exchange-mcp"]\n      }\n    }\n  }\n}\n```\n\n'
                 "Note the shape difference from other clients: the key is context_servers and command "
-                "is an object with a path field.",
+                "is an object with a path field. Configure credentials after the server starts.",
             ),
             (
                 "How do I add the server to VS Code with GitHub Copilot?",
-                "Add `.vscode/mcp.json` to your workspace. The top-level key is `servers` and each "
-                'entry needs an explicit `"type": "stdio"`:\n\n```json\n{\n  "servers": {\n    "delta-exchange-mcp": {\n      "type": "stdio",\n      "command": "uvx",\n      "args": ["delta-exchange-mcp"],\n      "env": {\n        "DELTA_MCP_ENV": "india_prod",\n        "DELTA_API_KEY": "your-api-key",\n        "DELTA_API_SECRET": "your-api-secret"\n      }\n    }\n  }\n}\n```',
+                "Use the Install in VS Code button in the README. VS Code creates the local stdio "
+                "entry and asks for the environment, API key, and secret through its own inputs. The "
+                "credential inputs are masked. Leave both credential prompts empty for public market "
+                "data. Do not put placeholder credentials in `.vscode/mcp.json`.",
             ),
             (
                 "How do I add the server to Claude Desktop?",
-                "Open Settings then Developer then Edit config, or edit the config file directly. Add "
-                'an mcpServers entry with command `uvx` and args `["delta-exchange-mcp"]`, plus the '
-                "DELTA_MCP_ENV and optional key/secret env vars. Quit and relaunch Claude Desktop for "
-                "changes to take effect.",
+                "Download the Claude Desktop MCP bundle from the README and open it. Claude Desktop "
+                "shows a form, installs the server, and fetches uv and Python itself. Leave the key and "
+                "secret empty for public market data. Manual JSON is only a fallback; its mcpServers "
+                "entry needs command `uvx` and args `[\"delta-exchange-mcp\"]`, with no credentials.",
             ),
             (
                 "Where is the Claude Desktop config file?",
@@ -195,15 +205,17 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Are the API key and secret required in the config?",
-                "No. DELTA_API_KEY and DELTA_API_SECRET are optional in every client snippet. Drop "
-                "them to run in public-data-only mode. Set both to register the account read-only "
-                "tools.",
+                "No. Normal client install entries contain no credentials and start with public market "
+                "data. For account access, use the in-chat credential form, run `uvx "
+                "delta-exchange-mcp login`, edit `~/.delta-exchange-mcp/config.env`, or use a client's "
+                "own masked credential fields. Configure both the key and its matching secret.",
             ),
             (
                 "How do I run the testnet instead of production?",
-                "Set `DELTA_MCP_ENV=india_testnet` in the client env block. Use a demo key created at "
-                "demo.delta.exchange, because prod and testnet keys are separate. The default is "
-                "india_prod.",
+                "Choose the practice site in the credential form, or set `DELTA_MCP_ENV=india_testnet` "
+                "through the login command or `~/.delta-exchange-mcp/config.env`. Use a demo key created "
+                "at demo.delta.exchange because production and testnet keys are separate. A client "
+                "setting can override the shared environment.",
             ),
             (
                 "How do I pin a specific version?",
@@ -268,8 +280,9 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             (
                 "Which clients does the server support?",
                 "Claude Code, Cursor, Codex, Windsurf, Zed, VS Code with GitHub Copilot, and Claude "
-                "Desktop. Each has its own config file and JSON or TOML shape, but all launch the same "
-                "`uvx delta-exchange-mcp` subprocess.",
+                "Desktop. Editor clients normally launch a local `uvx delta-exchange-mcp` subprocess. "
+                "Claude Desktop can instead install the MCP bundle, which fetches its own runtime and "
+                "collects configuration through a form.",
             ),
         ],
     ),
@@ -285,7 +298,8 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             (
                 "Can I recover a lost API secret?",
                 "No. The api_secret is shown once at creation and cannot be re-derived. If you lose it, "
-                "create a new key and update your client config.",
+                "create a new key and replace the old credentials through the in-chat form, the login "
+                "command, the shared configuration file, or your client's secure credential fields.",
             ),
             (
                 "Which permission does the API key need?",
@@ -342,21 +356,25 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Does the AI model ever see my credentials?",
-                "No. The server reads both credentials from your local environment outside the AI "
-                "model. It sends the API key directly to Delta over HTTPS and uses the API secret "
-                "locally to sign requests. Neither credential is written to the debug or audit logs.",
+                "No, if you use a supported credential route. The in-chat form runs outside the "
+                "conversation, the login command hides terminal input, and the shared file stays local. "
+                "Never paste a key or secret into an ordinary chat message. The server sends the API key "
+                "directly to Delta over HTTPS, uses the secret locally to sign requests, and writes "
+                "neither credential to the debug or audit logs.",
             ),
             (
                 "How do I register the account read-only tools?",
-                "Set both DELTA_API_KEY and DELTA_API_SECRET in the client env block. The server "
-                "registers the 13 account read-only tools only when both are present. Without them it "
-                "runs in pure public mode.",
+                "Ask the assistant to connect your Delta account and use the credential form. You can "
+                "also run `uvx delta-exchange-mcp login`, fill in "
+                "`~/.delta-exchange-mcp/config.env`, or use a client's secure credential fields. Set "
+                "both halves of the same key. The form can register the account tools in the current "
+                "session; the other routes may need a connection-status check or client restart.",
             ),
             (
                 "What happens without credentials?",
-                "Without DELTA_API_KEY and DELTA_API_SECRET, only the 14 public market-data tools "
-                "register. The account and trading tools stay off, and the server behaves as a "
-                "public-data-only server.",
+                "Without an API key and secret, the 14 public market-data tools and the connection and "
+                "credential-setup tools remain available. The account and trading tools stay off, so "
+                "the server cannot read your account or place orders.",
             ),
         ],
     ),
@@ -370,9 +388,11 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I enable trading?",
-                "Set DELTA_MCP_MODE=trade in the client env block alongside a valid API key and "
-                "secret. The key must have Trading enabled in Delta API management and the requesting "
-                "IP whitelisted. Without the opt-in the trading tools do not register.",
+                "Ask the assistant to connect your Delta account and choose Read and trade in the "
+                "credential form, then restart that client. The form stores trade mode for that client "
+                "only. You can instead set `DELTA_MCP_MODE=trade` in that client's own configuration; "
+                "do not put the plain mode setting in the shared file. The key must have Trading "
+                "permission and the requesting IP must be whitelisted.",
             ),
             (
                 "What is dry run?",
@@ -982,14 +1002,17 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Why does the trading tool set not appear?",
-                "The trading tools register only when DELTA_MCP_MODE=trade is set together with a valid "
-                "API key and secret. Confirm all three are set in the client env block and that you "
-                "restarted the client so the process respawned.",
+                "Trading needs a valid key and secret plus trade mode for the current client. Use the "
+                "credential form and choose Read and trade, or set `DELTA_MCP_MODE=trade` in that one "
+                "client's configuration. The plain mode setting is not read from the shared file. "
+                "Restart the client after you enable trade mode.",
             ),
             (
                 "Why does an account tool not appear?",
-                "The account read-only tools register only when both DELTA_API_KEY and DELTA_API_SECRET "
-                "are set. Confirm both are present, then restart the client to respawn the server.",
+                "Account tools need both halves of the same API key. Check the credential form, login "
+                "command, shared configuration file, or your client's secure credential fields. A "
+                "client setting takes precedence over the shared file. Ask for connection status to "
+                "reconcile a safe file change, or restart the client.",
             ),
             (
                 "How do I report a bug?",
