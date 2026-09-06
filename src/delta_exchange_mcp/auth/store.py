@@ -615,9 +615,6 @@ class CredentialStore:
         environment: str,
     ) -> None:
         previous = values.get(environment, EnvironmentState())
-        if not previous.pending_revisions:
-            return
-
         if previous.active_revision is not None:
             try:
                 self._get_locked(environment, values)
@@ -630,6 +627,9 @@ class CredentialStore:
                 )
                 self._metadata.write(values)
                 return
+
+        if not previous.pending_revisions:
+            return
 
         remaining: list[int] = []
         for revision in previous.pending_revisions:
