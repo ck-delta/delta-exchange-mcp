@@ -1361,7 +1361,7 @@ async def test_store_open_failure_keeps_public_tools_available(
     assert app.connection_service.credentials.source is CredentialSource.MEMORY
 
 
-def test_missing_secret_record_disables_account_access_but_allows_disconnect() -> None:
+def test_missing_secret_record_requires_reconnect_and_allows_disconnect() -> None:
     backend = MemorySecretBackend()
     credentials = CredentialStore(
         backend,
@@ -1397,7 +1397,8 @@ def test_missing_secret_record_disables_account_access_but_allows_disconnect() -
 
     assert status["credentials_configured"] is False
     assert status["account_tools_available"] is False
-    assert status["connection_error"] == "credential_store_unavailable"
-    assert environment["credential_metadata_present"] is True
-    assert environment["validation_state"] == "unavailable"
-    assert disconnected.content["status"] == "disconnected"
+    assert status["connection_error"] == ""
+    assert environment["credential_metadata_present"] is False
+    assert environment["reconnect_required"] is True
+    assert environment["validation_state"] == "not_connected"
+    assert disconnected.content["status"] == "not_connected"
