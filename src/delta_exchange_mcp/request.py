@@ -30,7 +30,7 @@ class Client:
     or grant consent by itself.
 
     `title` is the host's display name and may be set by the person using it, so it is
-    included only in bounded analytics and never used as a consent key.
+    used for display only. It is not forwarded in analytics or used as a consent key.
     """
 
     name: str = ""
