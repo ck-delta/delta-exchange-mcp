@@ -255,6 +255,12 @@ Zed uses `context_servers` in `~/.config/zed/settings.json`:
 
 ## Safety
 
+The server trusts the local MCP client. A process that has the Manage Connection URL
+can obtain its page cookie and CSRF token and request connection or consent changes.
+The page does not independently verify user identity or presence. This is an accepted
+exception to the MCP URL elicitation security requirements. Read the
+[local security model](docs/security.md) before you connect a client.
+
 - The MCP transport is local stdio. There is no shared hosted Delta MCP endpoint.
 - The browser setup listener binds to `127.0.0.1` on a random port. It closes after ten
   minutes, after the user enables trading, or when the MCP process stops.
@@ -279,12 +285,21 @@ records, but the name is not proof of identity and cannot grant consent by itsel
 | `X-Delta-MCP-Client-Version` | The version reported by the MCP client, when available. |
 | `X-Delta-MCP-Tool` | The MCP tool that caused the Delta request. |
 | `X-Delta-MCP-Protocol` | The MCP protocol version for the request. |
-| `X-Delta-MCP-Context` | The client's optional title, description, website, icon count, and capability shape, plus the operating system and Python version. Private extension names and settings are not included. |
+| `X-Delta-MCP-Context` | The operating system and architecture, Python major and minor version, presence of sampling, elicitation, roots and tasks, and counts of experimental and extension capabilities. Private extension names and settings are not included. |
 
 The server does not add the Delta environment, trading state, credential source, consent
 state, credential or consent revision, account ID, API key, API secret, signature, or a
 credential digest to these headers. It also adds no connection or installation identifier.
 Untrusted text is encoded, and the complete analytics header set is limited to 4,096 bytes.
+The server does not forward the client's title, description, website, or icons. Client
+names and versions are still supplied by the client. Do not put personal information in
+these fields.
+
+Set `DELTA_MCP_ANALYTICS=off` in the MCP client's process environment to omit all six
+analytics headers. The required User-Agent and authentication headers still apply.
+The package does not store an analytics history locally. Delta API infrastructure receives
+the headers with each request. Its log retention is controlled outside this package;
+this repository does not define or promise a retention period for those logs.
 
 ## Updating
 

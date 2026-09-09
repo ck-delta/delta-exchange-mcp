@@ -544,6 +544,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "respx" },
@@ -552,12 +553,13 @@ dev = [
 evals = [
     { name = "anthropic" },
     { name = "deepeval" },
+    { name = "jsonschema" },
 ]
 
 [package.metadata]
-  requires-dist = [
-      { name = "httpx", specifier = ">=0.28.1,<1" },
-      { name = "keyring", specifier = ">=25.7.0,<26" },
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28.1,<1" },
+    { name = "keyring", specifier = ">=25.7.0,<26" },
     { name = "mcp", specifier = ">=2.1.1,<3" },
     { name = "pydantic", specifier = ">=2.13.2,<3" },
     { name = "python-dotenv", specifier = ">=1.0,<2" },
@@ -565,6 +567,7 @@ evals = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "respx", specifier = ">=0.23.1" },
@@ -573,6 +576,7 @@ dev = [
 evals = [
     { name = "anthropic", specifier = ">=0.60" },
     { name = "deepeval", specifier = ">=4.1" },
+    { name = "jsonschema", specifier = ">=4.26,<5" },
 ]
 
 [[package]]

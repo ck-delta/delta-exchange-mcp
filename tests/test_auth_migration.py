@@ -140,6 +140,29 @@ def test_migration_publish_failure_rolls_back_the_new_record(tmp_path, monkeypat
     assert backend.values == {}
 
 
+def test_metadata_commit_failure_keeps_the_legacy_credential_file(
+    tmp_path, monkeypatch
+):
+    credentials, backend = make_store(tmp_path)
+    config_path = tmp_path / "config.env"
+    original = "DELTA_API_KEY=key\nDELTA_API_SECRET=secret\n"
+    config_path.write_text(original)
+    write = credentials._metadata.write
+
+    def fail_commit(values):
+        current = values.get("india_prod")
+        if current is not None and current.active_revision is not None:
+            raise MetadataError("commit failed")
+        write(values)
+
+    monkeypatch.setattr(credentials._metadata, "write", fail_commit)
+    with pytest.raises(MetadataError, match="commit failed"):
+        credentials.migrate(config_path)
+    assert config_path.read_text() == original
+    assert credentials.get("india_prod") is None
+    assert backend.values == {}
+
+
 def test_migration_publish_failure_restores_the_prior_active_record(
     tmp_path,
     monkeypatch,

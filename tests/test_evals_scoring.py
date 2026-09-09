@@ -1,6 +1,7 @@
 """Offline contracts for the deterministic tool-selection gate."""
 
 import pytest
+from mcp.types import Tool
 
 from evals.agent import ToolCall, Transcript, TurnRecord
 from evals.dataset import ANY, CASES, MUTATING_TOOLS, Case, Expect, Turn
@@ -30,7 +31,10 @@ def _transcript(
     calls_by_turn: tuple[tuple[ToolCall, ...], ...],
 ) -> Transcript:
     return Transcript(
-        available_tools=[],
+        available_tools=[
+            Tool(name=name, input_schema={"type": "object"})
+            for name in sorted({call.name for calls in calls_by_turn for call in calls})
+        ],
         turns=[
             TurnRecord(prompt=turn.prompt, reply="done", calls=list(calls))
             for turn, calls in zip(case.turns, calls_by_turn, strict=True)
@@ -80,9 +84,7 @@ async def test_dataset_contracts_match_registered_tool_schemas() -> None:
     for case in CASES:
         for turn in case.turns:
             policy_names = (
-                turn.allowed_reads
-                | turn.forbidden_reads
-                | turn.forbidden_mutations
+                turn.allowed_reads | turn.forbidden_reads | turn.forbidden_mutations
             )
             assert policy_names <= tools.keys(), case.id
             for expected in turn.expect:
@@ -104,15 +106,15 @@ def test_prompt_literals_are_exact_dataset_contracts() -> None:
     assert _expect("set_leverage", "set_product_leverage").args["leverage"] == "10"
     assert _expect("positions_single", "get_positions").args["product_id"] is ANY
     assert _expect("fills_not_history", "get_fills").args["product_ids"] == [ANY]
-    assert _expect("entry_with_bracket", "place_order").args[
-        "bracket_stop_loss_price"
-    ] == "60000"
-    assert _expect("flow_leverage_check_then_set", "set_product_leverage").args[
-        "leverage"
-    ] == "5"
-    assert _expect("flow_book_then_post_only", "place_order").args[
-        "limit_price"
-    ] is ANY
+    assert (
+        _expect("entry_with_bracket", "place_order").args["bracket_stop_loss_price"]
+        == "60000"
+    )
+    assert (
+        _expect("flow_leverage_check_then_set", "set_product_leverage").args["leverage"]
+        == "5"
+    )
+    assert _expect("flow_book_then_post_only", "place_order").args["limit_price"] is ANY
 
 
 @pytest.mark.parametrize("wrong_margin", ["500", "-5"])
@@ -325,6 +327,70 @@ def test_duplicate_mutation_is_not_permitted_by_one_expectation() -> None:
     passed, failures = check(case, transcript)
 
     assert not passed
-    assert failures == [
-        "turn 1: forbidden mutation called: adjust_position_margin"
+    assert failures == ["turn 1: forbidden mutation called: adjust_position_margin"]
+
+
+@pytest.mark.parametrize("product_id", ["BTCUSD", None, True, 27])
+@pytest.mark.parametrize("is_error", [False, True])
+async def test_derived_arguments_must_match_the_advertised_schema(product_id, is_error):
+    case = _case("set_leverage")
+    call = ToolCall(
+        name="set_product_leverage",
+        args={"product_id": product_id, "leverage": "10"},
+        result={"error": "upstream unavailable"} if is_error else {},
+        is_error=is_error,
+    )
+    transcript = _transcript(case, ((call,),))
+    app = build_server()
+    try:
+        transcript.available_tools = await app.list_tools()
+    finally:
+        await app.close_live_client()
+    passed, failures = check(case, transcript)
+    assert passed == (product_id == 27)
+    if not passed:
+        assert any(
+            "invalid set_product_leverage product_id" in item for item in failures
+        )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [{}, {"ids": [27, "BTCUSD"]}],
+)
+def test_supporting_read_arguments_must_match_their_complete_schema(arguments):
+    case = Case(
+        id="supporting-schema",
+        mode="read",
+        turns=(
+            Turn(
+                prompt="read",
+                expect=(),
+                allowed_reads=frozenset({"lookup"}),
+                forbidden_mutations=MUTATING_TOOLS,
+            ),
+        ),
+    )
+    transcript = _transcript(case, ((_call("lookup", arguments),),))
+    transcript.available_tools = [
+        Tool(
+            name="lookup",
+            input_schema={
+                "type": "object",
+                "required": ["ids"],
+                "properties": {"ids": {"type": "array", "items": {"type": "integer"}}},
+            },
+        )
     ]
+    passed, failures = check(case, transcript)
+    assert not passed
+    assert any("invalid lookup" in item for item in failures)
+
+
+def test_unadvertised_tool_cannot_pass_an_expectation():
+    case = _case("ticker_basic")
+    transcript = _transcript(case, ((_call("get_ticker", {"symbol": "BTCUSD"}),),))
+    transcript.available_tools = []
+    passed, failures = check(case, transcript)
+    assert not passed
+    assert "turn 1: tool was not advertised: get_ticker" in failures

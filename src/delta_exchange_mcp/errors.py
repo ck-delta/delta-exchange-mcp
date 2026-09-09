@@ -52,14 +52,13 @@ _OPERATION_HINTS: dict[str, str] = {
 
 _SAFE_CODE = re.compile(r"[A-Za-z0-9_. -]{1,128}\Z")
 
-# A permission response proves that Delta received an authenticated request. It does
-# not prove that the same key can access the trading-preferences validation endpoint.
 _PERMISSION_FAILURE_CODES = frozenset(
     {"UnauthorizedApiAccess", "unauthorized_api_access"}
 )
 
-# Keep permission separate so candidate validation can distinguish authentication-layer
-# responses from a valid key that lacks access to this one endpoint.
+# A response carrying one of these codes proves that the submitted credential pair
+# cannot authenticate. A missing endpoint permission is separate because the key can
+# still authenticate for another endpoint.
 _AUTH_FAILURE_CODES = frozenset(_AUTH_HINTS) - _PERMISSION_FAILURE_CODES
 
 
@@ -91,11 +90,20 @@ class DeltaApiError(ToolError):
     cross the MCP boundary.
     """
 
-    def __init__(self, code: Any, context: Any = None, status: int | None = None):
+    def __init__(
+        self,
+        code: Any,
+        context: Any = None,
+        status: int | None = None,
+        *,
+        hint: str | None = None,
+    ):
         self.code = normalize_error_code(code)
         self.context = context
         self.status = status if type(status) is int and 100 <= status <= 599 else None
-        self.hint = _AUTH_HINTS.get(self.code) or _OPERATION_HINTS.get(self.code)
+        # A caller can supply an application-owned hint. Never pass response text
+        # here; the untrusted upstream context remains excluded from the message.
+        self.hint = hint or _AUTH_HINTS.get(self.code) or _OPERATION_HINTS.get(self.code)
         # Kept as a field, not only interpolated into the message, so a caller writing its
         # own copy can use it without parsing the sentence back apart.
         self.ip = extract_ip(context)
@@ -114,7 +122,7 @@ class DeltaApiError(ToolError):
 
 
 def is_auth_failure(error: DeltaApiError) -> bool:
-    """Whether Delta returned an authentication-layer error."""
+    """Whether an API error decisively rejects the submitted credentials."""
     return error.code in _AUTH_FAILURE_CODES
 
 

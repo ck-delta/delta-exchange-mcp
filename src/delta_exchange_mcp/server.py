@@ -39,6 +39,7 @@ advanced externally managed compatibility overrides:
 non-secret diagnostics and paths:
   DELTA_MCP_DEBUG       1/true/yes/on to trace HTTP requests and responses to a file
   DELTA_MCP_DEBUG_FILE  override the debug log path
+  DELTA_MCP_ANALYTICS   off/false/0/no to omit client and tool analytics headers
   DELTA_MCP_AUDIT       off/false/0/no to disable the trading audit log
   DELTA_MCP_AUDIT_FILE  override the audit log path
   DELTA_MCP_CONFIG_FILE override the shared settings file path
