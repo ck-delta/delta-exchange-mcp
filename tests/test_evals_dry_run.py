@@ -21,6 +21,8 @@ from delta_exchange_mcp.server import build_server
 from delta_exchange_mcp.tools import account, trading
 from evals.agent import (
     BlockedToolError,
+    Transcript,
+    TurnRecord,
     _call,
     blocked_tools,
     mutating_tools,
@@ -28,6 +30,7 @@ from evals.agent import (
     server_environment,
 )
 from evals.dataset import CASES, Turn
+from evals.scoring import check
 
 MANAGE_URL = "http://127.0.0.1:43123/manage"
 CLIENT_INFO = Implementation(name="delta-mcp-evals", version="1")
@@ -286,6 +289,39 @@ async def test_explicit_dry_run_false_is_overridden():
     # recorded args are the model's intent, without the harness override
     assert "dry_run" not in call.args
     assert call.args == {"size": 1}
+
+
+async def test_schema_rejection_from_mcp_cannot_pass_the_argument_gate():
+    app = build_server(Config(env="india_testnet", base_url=INDIA_TESTNET_REST))
+    arguments = {"product_id": "BTCUSD", "leverage": "10"}
+    try:
+        async with Client(app, mode="auto", client_info=CLIENT_INFO) as client:
+            tools = (await client.list_tools()).tools
+            call = await _call(
+                client,
+                mutating_tools(tools),
+                "set_product_leverage",
+                arguments,
+                blocked=blocked_tools(tools),
+            )
+            assert call.is_error
+    finally:
+        await app.close_live_client()
+
+    case = next(case for case in CASES if case.id == "set_leverage")
+    transcript = Transcript(
+        available_tools=tools,
+        turns=[
+            TurnRecord(
+                prompt=case.turns[0].prompt,
+                reply="The product ID is not an integer.",
+                calls=[call],
+            )
+        ],
+    )
+    passed, failures = check(case, transcript)
+    assert not passed
+    assert any("invalid set_product_leverage product_id" in item for item in failures)
 
 
 async def test_success_without_dry_run_echo_is_rejected():
