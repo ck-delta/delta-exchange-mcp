@@ -1,0 +1,237 @@
+{
+  "manifest_version": "0.4",
+  "name": "delta-exchange-mcp",
+  "display_name": "Delta Exchange",
+  "version": "0.6.0",
+  "description": "Live market data and your Delta Exchange India account.",
+  "long_description": "Ask about Delta Exchange India in plain English: live prices, option chains, order books, funding and open-interest history, plus your own positions, orders, fills and balances.\n\n**Market data needs no account connection.** Account calls open a short-lived browser page when a connection is missing. Enter the API key and secret there. They do not pass through the conversation or an MCP tool call. When available, the server stores them in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Otherwise it keeps the connection and trading consent in process memory for that process. The server does not use a plaintext fallback.\n\n**Trading needs separate browser approval.** Trading tools stay visible so clients keep one stable tool list. A dry run sends no mutation and needs no trading approval. A real trading call opens the approval page when approval is missing. Approval does not execute the pending trade. Submit a new call if the trade is still wanted.\n\nProduction trading can place real orders with no size cap. Orders are sized in contracts, not coins. The approval page requires a separate production acknowledgement. By default, every real mutation is written to an owner-only audit log.",
+  "author": {
+    "name": "Delta Exchange",
+    "url": "https://www.delta.exchange"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/delta-exchange/delta-exchange-mcp"
+  },
+  "homepage": "https://www.delta.exchange",
+  "documentation": "https://github.com/delta-exchange/delta-exchange-mcp#readme",
+  "support": "https://github.com/delta-exchange/delta-exchange-mcp/issues",
+  "icon": "icon.png",
+  "license": "MIT",
+  "keywords": [
+    "trading",
+    "crypto",
+    "options",
+    "futures",
+    "market-data"
+  ],
+  "server": {
+    "type": "uv",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "--frozen",
+        "python",
+        "server/main.py"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "adjust_position_margin",
+      "description": "Add or remove isolated margin on a position."
+    },
+    {
+      "name": "bulk_fills_export",
+      "description": "Bulk-export your fills to a CSV file on disk."
+    },
+    {
+      "name": "cancel_all_orders",
+      "description": "Cancel open orders. WARNING: with no filters this cancels ALL of your open orders."
+    },
+    {
+      "name": "cancel_batch_orders",
+      "description": "Cancel up to 50 orders on one contract in a single request."
+    },
+    {
+      "name": "cancel_order",
+      "description": "Cancel a single order by id or client_order_id."
+    },
+    {
+      "name": "close_all_positions",
+      "description": "Close open positions in the scopes you set to true. Both flags default to false,"
+    },
+    {
+      "name": "configure_auto_topup",
+      "description": "Override auto top-up for a single position (otherwise inherits the account setting)."
+    },
+    {
+      "name": "edit_batch_orders",
+      "description": "Edit up to 50 orders on one contract in a single request."
+    },
+    {
+      "name": "edit_bracket_order",
+      "description": "Edit the bracket (TP/SL) params on an existing order."
+    },
+    {
+      "name": "edit_order",
+      "description": "Edit an open order. Pass exactly one of product_id or product_symbol."
+    },
+    {
+      "name": "get_candles",
+      "description": "OHLC candles. For funding/mark/OI history prefer the dedicated tools"
+    },
+    {
+      "name": "get_connection_status",
+      "description": "Report connection and trading state without returning credential material."
+    },
+    {
+      "name": "get_debug_status",
+      "description": "Report whether debug logging is on and where its log is stored."
+    },
+    {
+      "name": "get_fills",
+      "description": "Your trade fills (executed trades). Paginated. Timestamps are microseconds."
+    },
+    {
+      "name": "get_funding_history",
+      "description": "Historical funding rate candles for a perpetual."
+    },
+    {
+      "name": "get_indices",
+      "description": "Spot price indices that Delta builds by combining prices from prominent exchanges."
+    },
+    {
+      "name": "get_margined_positions",
+      "description": "All open margined positions, optionally filtered."
+    },
+    {
+      "name": "get_mark_price_history",
+      "description": "Historical mark-price candles for a product."
+    },
+    {
+      "name": "get_oi_history",
+      "description": "Historical open-interest candles for a product."
+    },
+    {
+      "name": "get_open_orders",
+      "description": "Current open/pending orders. Paginated via meta.after / meta.before."
+    },
+    {
+      "name": "get_options_chain",
+      "description": "Options chain (all call+put tickers) for one underlying on one expiry."
+    },
+    {
+      "name": "get_order_by_id",
+      "description": "Fetch a single order by id or client_order_id. Exactly one must be provided."
+    },
+    {
+      "name": "get_order_history",
+      "description": "Closed or cancelled order records. Use get_fills for executed trades."
+    },
+    {
+      "name": "get_orderbook",
+      "description": "L2 orderbook snapshot for a symbol."
+    },
+    {
+      "name": "get_positions",
+      "description": "Open position(s). Pass exactly one of product_id or underlying_asset_symbol."
+    },
+    {
+      "name": "get_product",
+      "description": "Get full product details for a single symbol (e.g. BTCUSD, C-BTC-66400-010824)."
+    },
+    {
+      "name": "get_product_leverage",
+      "description": "Configured order leverage for a product."
+    },
+    {
+      "name": "get_recent_trades",
+      "description": "Recent public trades for a symbol."
+    },
+    {
+      "name": "get_reference_data",
+      "description": "Merged assets + indices listing \u2014 useful for symbol/asset metadata lookups."
+    },
+    {
+      "name": "get_settlement_prices",
+      "description": "Historical settlement prices for expired/settled derivatives."
+    },
+    {
+      "name": "get_skill",
+      "description": "The full text of a skill, or of one of its supporting files."
+    },
+    {
+      "name": "get_ticker",
+      "description": "Get 24h ticker (price, volume, OI, mark/spot) for one symbol."
+    },
+    {
+      "name": "get_trading_preferences",
+      "description": "User trading preferences (margin mode, notifications, etc.)."
+    },
+    {
+      "name": "get_trading_stats",
+      "description": "Account-level trading volume / stats."
+    },
+    {
+      "name": "get_trading_status",
+      "description": "Report whether this client can send trading mutations."
+    },
+    {
+      "name": "get_wallet_balances",
+      "description": "Wallet balances across all assets."
+    },
+    {
+      "name": "get_wallet_transactions",
+      "description": "Wallet transaction history. Paginated. Timestamps are microseconds."
+    },
+    {
+      "name": "list_products",
+      "description": "List tradable products on Delta Exchange with optional filters. Returns paginated result + meta cursors."
+    },
+    {
+      "name": "list_skills",
+      "description": "The procedures this server knows how to run, and when to use each."
+    },
+    {
+      "name": "list_tickers",
+      "description": "List tickers across many products with optional contract-type / underlying filters."
+    },
+    {
+      "name": "place_batch_orders",
+      "description": "Place up to 50 orders on one contract in a single request."
+    },
+    {
+      "name": "place_bracket_order",
+      "description": "Attach a take-profit / stop-loss bracket to a position. Provide at least one leg."
+    },
+    {
+      "name": "place_order",
+      "description": "Place a single order. Pass exactly one of product_id or product_symbol."
+    },
+    {
+      "name": "set_product_leverage",
+      "description": "Set order leverage for a product."
+    },
+    {
+      "name": "setup_credentials",
+      "description": "Open the browser page for credentials and trading consent."
+    }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "python": ">=3.12"
+    }
+  }
+}

@@ -14,11 +14,9 @@ def _clear_handlers():
     """Each test attaches a FileHandler to module loggers; remove them after so the open
     file doesn't leak into the next test (and the idempotency guard starts fresh)."""
     yield
+    debug_log.shutdown()
     for name in debug_log.LOGGER_NAMES:
         logger = logging.getLogger(name)
-        for h in list(logger.handlers):
-            h.close()
-            logger.removeHandler(h)
         logger.setLevel(logging.NOTSET)
         logger.propagate = True
 
@@ -48,7 +46,7 @@ async def test_logs_request_and_body_but_no_secrets(tmp_path, monkeypatch):
 
     for h in logging.getLogger("delta_exchange_mcp").handlers:
         h.flush()
-    text = log_file.read_text()
+    text = log_file.read_text(encoding="utf-8")
 
     # Request + body are captured.
     assert "wallet/transactions" in text
@@ -80,7 +78,7 @@ async def test_logs_csv_body_for_raw_text_response(tmp_path, monkeypatch):
 
     for h in logging.getLogger("delta_exchange_mcp").handlers:
         h.flush()
-    text = log_file.read_text()
+    text = log_file.read_text(encoding="utf-8")
     assert "Time,Contract,Side" in text  # raw CSV body captured, not just byte count
 
 
@@ -88,6 +86,41 @@ def test_debug_off_returns_none(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_MCP_DEBUG_FILE", str(tmp_path / "d.log"))
     assert debug_log.configure(_cfg(tmp_path, debug=False)) is None
     assert not (tmp_path / "d.log").exists()
+
+
+def test_shutdown_detaches_and_closes_shared_handler(tmp_path, monkeypatch):
+    monkeypatch.setenv("DELTA_MCP_DEBUG_FILE", str(tmp_path / "d.log"))
+    debug_log.configure(_cfg(tmp_path, debug=True))
+
+    handler = logging.getLogger("delta_exchange_mcp").handlers[0]
+    assert all(handler in logging.getLogger(name).handlers for name in debug_log.LOGGER_NAMES)
+    assert handler.stream is not None
+
+    debug_log.shutdown()
+
+    assert all(handler not in logging.getLogger(name).handlers for name in debug_log.LOGGER_NAMES)
+    assert handler.stream is None
+    debug_log.shutdown()  # idempotent
+
+
+def test_shutdown_restores_each_logger_configuration(tmp_path, monkeypatch):
+    monkeypatch.setenv("DELTA_MCP_DEBUG_FILE", str(tmp_path / "d.log"))
+    expected = {
+        "delta_exchange_mcp": (logging.WARNING, True),
+        "httpx": (logging.ERROR, False),
+    }
+    for name, (level, propagate) in expected.items():
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
+        logger.propagate = propagate
+
+    debug_log.configure(_cfg(tmp_path, debug=True))
+    debug_log.shutdown()
+
+    assert {
+        name: (logging.getLogger(name).level, logging.getLogger(name).propagate)
+        for name in expected
+    } == expected
 
 
 def test_log_file_is_owner_only(tmp_path, monkeypatch):

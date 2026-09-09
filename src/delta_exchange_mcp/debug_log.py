@@ -16,19 +16,20 @@ import os
 import sys
 import tempfile
 import time
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from delta_exchange_mcp.config import Config
+from delta_exchange_mcp.config import Config, setting
+from delta_exchange_mcp.version import PACKAGE_VERSION
 
 LOGGER_NAMES = ("delta_exchange_mcp", "httpx")
 _FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
 # Marker so we don't attach a second handler if build_server runs twice in one process.
 _MARKER = "_delta_debug_handler"
+_STATE_MARKER = "_delta_debug_logger_states"
 
 
 def _resolve_path() -> Path:
-    override = os.environ.get("DELTA_MCP_DEBUG_FILE")
+    override = setting("DELTA_MCP_DEBUG_FILE")
     if override:
         return Path(override).expanduser()
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -76,6 +77,11 @@ def configure(cfg: Config) -> Path | None:
         return None
 
     setattr(handler, _MARKER, True)
+    prior_states = {
+        name: (logging.getLogger(name).level, logging.getLogger(name).propagate)
+        for name in LOGGER_NAMES
+    }
+    setattr(handler, _STATE_MARKER, prior_states)
     handler.setFormatter(logging.Formatter(_FORMAT))
     for name in LOGGER_NAMES:
         logger = logging.getLogger(name)
@@ -83,15 +89,34 @@ def configure(cfg: Config) -> Path | None:
         logger.addHandler(handler)
         logger.propagate = False  # never leak to a root/stdout handler
 
-    try:
-        pkg_version = version("delta-exchange-mcp")
-    except PackageNotFoundError:
-        pkg_version = "0+unknown"
     surface = "market+account" if cfg.has_credentials else "market"
     logging.getLogger(LOGGER_NAMES[0]).info(
         "debug log start: delta-exchange-mcp/%s env=%s base_url=%s surface=%s | "
         "credentials (api-key/secret/signature) are never logged; "
         "response bodies may contain account data",
-        pkg_version, cfg.env, cfg.base_url, surface,
+        PACKAGE_VERSION, cfg.env, cfg.base_url, surface,
     )
     return path
+
+
+def shutdown() -> None:
+    """Detach and close the debug handler attached by this module, if any."""
+    handlers: set[logging.Handler] = set()
+    prior_states: dict[str, tuple[int, bool]] = {}
+    for name in LOGGER_NAMES:
+        logger = logging.getLogger(name)
+        for handler in list(logger.handlers):
+            if getattr(handler, _MARKER, False):
+                prior_states.update(getattr(handler, _STATE_MARKER, {}))
+                logger.removeHandler(handler)
+                handlers.add(handler)
+
+    for name, (level, propagate) in prior_states.items():
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
+        logger.propagate = propagate
+
+    # The same handler is attached to both module loggers. Close it only after it has been
+    # detached everywhere, and only once, so Windows can remove its containing directory.
+    for handler in handlers:
+        handler.close()

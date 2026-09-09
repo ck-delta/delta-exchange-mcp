@@ -1,8 +1,13 @@
-"""Account tools register only when both DELTA_API_KEY and DELTA_API_SECRET are set."""
+"""Tool discovery stays stable while authorization changes at call time."""
 
 import asyncio
 
+from mcp.server.mcpserver import MCPServer
+
+from delta_exchange_mcp.client import DeltaClient
+from delta_exchange_mcp.config import INDIA_TESTNET_REST, Config
 from delta_exchange_mcp.server import build_server
+from delta_exchange_mcp.tools import account, trading
 
 
 MARKET_TOOLS = {
@@ -29,7 +34,6 @@ ACCOUNT_TOOLS = {
     "get_product_leverage",
     "get_trading_stats",
     "get_trading_preferences",
-    "get_profile",
 }
 
 
@@ -37,12 +41,13 @@ def _tool_names(mcp) -> set[str]:
     return {t.name for t in asyncio.run(mcp.list_tools())}
 
 
-def test_market_only_without_creds(monkeypatch):
+def test_account_and_trading_tools_are_discoverable_without_credentials(monkeypatch):
     monkeypatch.delenv("DELTA_API_KEY", raising=False)
     monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     names = _tool_names(build_server())
     assert MARKET_TOOLS.issubset(names)
-    assert ACCOUNT_TOOLS.isdisjoint(names)
+    assert ACCOUNT_TOOLS.issubset(names)
+    assert trading.TOOL_NAMES.issubset(names)
 
 
 def test_account_tools_register_with_creds(monkeypatch):
@@ -53,9 +58,39 @@ def test_account_tools_register_with_creds(monkeypatch):
     assert ACCOUNT_TOOLS.issubset(names)
 
 
-def test_partial_creds_skip_account_tools(monkeypatch):
+def test_partial_credentials_do_not_change_discovery(monkeypatch):
     monkeypatch.setenv("DELTA_API_KEY", "k")
     monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     names = _tool_names(build_server())
     assert MARKET_TOOLS.issubset(names)
-    assert ACCOUNT_TOOLS.isdisjoint(names)
+    assert ACCOUNT_TOOLS.issubset(names)
+    assert trading.TOOL_NAMES.issubset(names)
+
+
+def test_account_removal_manifest_matches_the_registered_surface():
+    mcp = MCPServer("account-tools")
+    client = DeltaClient(
+        Config(
+            env="india_testnet",
+            base_url=INDIA_TESTNET_REST,
+            api_key="k",
+            api_secret="s",
+        )
+    )
+    account.register(mcp, client)
+    assert _tool_names(mcp) == account.TOOL_NAMES
+
+
+def test_trading_removal_manifest_matches_the_registered_surface():
+    mcp = MCPServer("trading-tools")
+    client = DeltaClient(
+        Config(
+            env="india_testnet",
+            base_url=INDIA_TESTNET_REST,
+            api_key="k",
+            api_secret="s",
+            mode="trade",
+        )
+    )
+    trading.register(mcp, client)
+    assert _tool_names(mcp) == trading.TOOL_NAMES

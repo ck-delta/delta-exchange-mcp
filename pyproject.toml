@@ -1,20 +1,34 @@
 [project]
 name = "delta-exchange-mcp"
-version = "0.4.1"
+version = "0.6.0"
 description = "Official MCP server for Delta Exchange India — market data and account read for AI assistants."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Anuj Sharma", email = "anuj.sharma@delta.exchange" }
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "httpx>=0.28.1",
-    "mcp>=1.12.4",
-    "pydantic>=2.13.2",
+    "httpx>=0.28.1,<1",
+    "keyring>=25.7.0,<26",
+    "mcp>=2.1.1,<3",
+    "pydantic>=2.13.2,<3",
+    # Already resolved via mcp -> pydantic-settings, but declared because we import it
+    # directly. Hand-rolling the parse is what it replaces: quoted values, an `export`
+    # prefix, a trailing comment or CRLF endings each corrupt a credential silently.
+    "python-dotenv>=1.0,<2",
 ]
+
+[project.urls]
+Homepage = "https://www.delta.exchange"
+Repository = "https://github.com/delta-exchange/delta-exchange-mcp"
+Documentation = "https://github.com/delta-exchange/delta-exchange-mcp#readme"
+Issues = "https://github.com/delta-exchange/delta-exchange-mcp/issues"
 
 [project.scripts]
 delta-exchange-mcp = "delta_exchange_mcp:main"
+delta-exchange-pnl = "delta_exchange_mcp.report.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]
@@ -22,10 +36,16 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26,<5",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "respx>=0.23.1",
     "ruff>=0.15.11",
+]
+evals = [
+    "jsonschema>=4.26,<5",
+    "anthropic>=0.60",
+    "deepeval>=4.1",
 ]
 
 [tool.pytest.ini_options]

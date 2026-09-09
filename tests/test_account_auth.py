@@ -1,5 +1,6 @@
 """Auth plumbing: signing path, headers, and documented error mapping."""
 
+import asyncio
 import hashlib
 import hmac
 
@@ -8,7 +9,7 @@ import pytest
 import respx
 
 from delta_exchange_mcp.client import DeltaClient, sign
-from delta_exchange_mcp.config import INDIA_TESTNET_REST, Config
+from delta_exchange_mcp.config import INDIA_PROD_REST, INDIA_TESTNET_REST, Config
 from delta_exchange_mcp.errors import DeltaApiError
 
 
@@ -85,8 +86,75 @@ async def test_auth_required_without_creds_raises():
 
 
 @pytest.mark.asyncio
+async def test_an_in_flight_request_keeps_one_coherent_state_during_rebind():
+    """A hot save cannot mix the old URL with the new key or close the old transport."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    seen = {}
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        entered.set()
+        await release.wait()
+        seen["url"] = str(request.url)
+        seen["key"] = request.headers["api-key"]
+        return httpx.Response(200, json={"success": True, "result": []})
+
+    transport = httpx.AsyncClient(
+        base_url=INDIA_TESTNET_REST, transport=httpx.MockTransport(handle)
+    )
+    client = DeltaClient(
+        Config(
+            env="india_testnet",
+            base_url=INDIA_TESTNET_REST,
+            api_key="old-key",
+            api_secret="old-secret",
+        ),
+        http=transport,
+    )
+    request = asyncio.create_task(client.get("/wallet/balances", auth=True))
+    await entered.wait()
+    client.rebind(
+        Config(
+            env="india_prod",
+            base_url=INDIA_PROD_REST,
+            api_key="new-key",
+            api_secret="new-secret",
+        )
+    )
+    release.set()
+    await request
+    assert transport.is_closed
+    assert client._retired == {}
+    await client.aclose()
+
+    assert seen == {
+        "url": f"{INDIA_TESTNET_REST}/wallet/balances",
+        "key": "old-key",
+    }
+
+
+@pytest.mark.asyncio
+async def test_idle_rebinds_close_retired_transports_promptly():
+    client = DeltaClient(
+        Config(env="india_testnet", base_url=INDIA_TESTNET_REST)
+    )
+
+    for index in range(250):
+        client.rebind(
+            Config(
+                env="india_testnet",
+                base_url=f"https://example-{index}.invalid/v2",
+            )
+        )
+    await asyncio.sleep(0)
+
+    assert client._retired == {}
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 @respx.mock
-async def test_invalid_api_key_message_hints_env():
+async def test_invalid_api_key_message_hints_manage_connection():
     respx.get(f"{INDIA_TESTNET_REST}/wallet/balances").mock(
         return_value=httpx.Response(
             401, json={"success": False, "error": {"code": "InvalidApiKey"}}
@@ -96,7 +164,30 @@ async def test_invalid_api_key_message_hints_env():
     with pytest.raises(DeltaApiError) as exc:
         await client.get("/wallet/balances", auth=True)
     assert exc.value.code == "InvalidApiKey"
-    assert "DELTA_MCP_ENV" in str(exc.value)
+    assert "Open Manage Connection" in str(exc.value)
+    assert "environment is externally managed" in str(exc.value)
+    assert "DELTA_MCP_ENV" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["UnauthorizedApiAccess", "unauthorized_api_access"])
+@respx.mock
+async def test_account_permission_error_does_not_name_the_validation_endpoint(
+    code: str,
+) -> None:
+    respx.get(f"{INDIA_TESTNET_REST}/wallet/balances").mock(
+        return_value=httpx.Response(
+            403,
+            json={"success": False, "error": {"code": code}},
+        )
+    )
+
+    with pytest.raises(DeltaApiError) as exc:
+        await _client_with_creds().get("/wallet/balances", auth=True)
+
+    message = str(exc.value)
+    assert "lacks permission for this endpoint" in message
+    assert "trading preferences" not in message
 
 
 @pytest.mark.asyncio

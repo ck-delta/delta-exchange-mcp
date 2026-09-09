@@ -1,123 +1,229 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/d49dfba97e57120448bb4e0267abde6d7931e5f1/packaging/mcpb/icon.png" width="88" alt="Delta Exchange">
+
 # delta-exchange-mcp
 
-![Status: Beta](https://img.shields.io/badge/status-beta-orange)
-[![PyPI version](https://img.shields.io/pypi/v/delta-exchange-mcp)](https://pypi.org/project/delta-exchange-mcp/)
+> Ask about Delta Exchange India in plain English from Claude or your editor.
 
-Official MCP (Model Context Protocol) server for **Delta Exchange India**. Lets AI assistants (Claude Desktop, Claude Code, Cursor, Zed, Codex) query Delta Exchange market data and your own account (read-only) through standardized tools.
+![Status: Beta][beta-badge] [![PyPI version][pypi-version-badge]][pypi-version-link]
 
-> **Status:** Beta. Functional and used internally, but the tool surface and configuration may still change. Please [open an issue](https://github.com/delta-exchange/delta-exchange-mcp/issues) for bugs, missing tools, or rough edges. Early reports directly shape what ships next.
+[![Download for Claude Desktop][claude-desktop-badge]][claude-desktop-link] [![Add to Cursor][cursor-badge]][cursor-link] [![Install in VS Code][vs-code-badge]][vs-code-link]
 
-**What you get:** 14 public market-data tools + 13 authenticated read-only account tools (positions, orders, fills, wallet, stats, leverage, preferences, profile). Trading mutations (place / edit / cancel orders, brackets, leverage, margin, close-all) are available but **off by default** — they register only when you opt in with `DELTA_MCP_MODE=trade` (see [Trading](#trading-opt-in)).
+</div>
 
----
+This is the official local MCP server for Delta Exchange India. Market data works without
+an account connection. Account tools use a Delta API key. Trading tools need separate
+browser approval.
 
-## Quick start
+> [!NOTE]
+> This project is in beta. The tool definitions and setup flow can still change. Please
+> [open an issue](https://github.com/delta-exchange/delta-exchange-mcp/issues) when a tool
+> returns incorrect data or the connection page does not work in your MCP client.
 
-**Prerequisite:** [`uv`](https://docs.astral.sh/uv/getting-started/installation/) installed on your machine.
+## Install
 
-Sanity-check the install:
+For Claude Desktop, select **Download for Claude Desktop** above and open the downloaded
+`.mcpb` file. The bundle asks for no API key, secret, environment, or trading mode. Claude
+Desktop installs the local server and obtains `uv` and Python when needed.
 
-```bash
-uvx delta-exchange-mcp --help
+For Cursor or VS Code, install [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
+and select the install button above. The generated server entry contains only this command:
+
+```text
+uvx delta-exchange-mcp
 ```
 
-The server runs **local stdio only**: your MCP client launches it as a subprocess, and your API keys never leave your machine. `uvx` resolves the latest published version from PyPI on each launch. To pin a specific version, use `uvx "delta-exchange-mcp==0.2.0"`.
+Other MCP clients are listed under [Install in your MCP client](#install-in-your-mcp-client).
+
+## Connect your Delta account
+
+After installation, tell the assistant:
+
+```text
+Connect my Delta Exchange account
+```
+
+The server calls `setup_credentials` with no arguments. It opens a short-lived Manage
+Connection page in your browser. If the client cannot open it, the tool result includes a
+clickable link.
+
+On that page:
+
+1. Choose production or testnet.
+2. Enter the API key and secret for that environment.
+3. Submit the connection.
+4. Enable trading only if you want that MCP client to send real mutations.
+
+The browser sends the credential directly to a loopback listener at `127.0.0.1`. The value
+does not enter the conversation and is not an MCP tool argument. Do not send an API key or
+secret in chat, even if an assistant asks for one.
+
+Create a production key under [Delta Exchange API Keys][prod-keys] or a testnet key under
+[Delta Exchange Testnet API Keys][testnet-keys]. Use only the permissions that the account
+calls need. A real trading key must have trading permission and meet Delta's IP rules. The
+current Delta documentation does not establish whether Read Data alone covers every account
+endpoint. This project does not make that claim.
+
+### Where the credential is stored
+
+The server stores one credential record for production and one for testnet. It uses:
+
+- macOS Keychain on macOS
+- Windows Credential Manager on Windows
+- Secret Service on Linux
+
+The non-secret metadata file records the active revision, validation state, account ID,
+timestamps, and revocation generation. It never contains the API key or secret.
+
+Each metadata location uses separate OS credential records. Two clients that use the same
+metadata location share its records. Copying metadata to a different location does not
+connect that location to the existing account.
+
+If no approved credential service is available, the server keeps the credential in memory
+for that process. The connection and trading approval then end when the process stops. The
+server does not use a plaintext fallback.
+
+### Existing installations
+
+On the first compatible start, the server checks the old
+`~/.delta-exchange-mcp/config.env` file. If it finds a complete key and secret pair, it writes
+the pair to the operating-system credential service and reads it back. It then removes only
+the two secret lines. A failed migration leaves the file unchanged. The old trade-mode value
+does not become trading approval.
+
+If you used the earlier browser-authorization draft, reconnect once through Manage
+Connection. The old OS record does not identify its metadata location, so the server cannot
+confirm that it belongs to this installation. The server leaves that record unchanged and
+saves the pair you enter as a separate OS record. Approve trading again if you need it.
+Moving a metadata file to a different location also requires this reconnect.
+
+A complete credential pair supplied by the MCP client's process environment remains
+supported for compatibility. The status tool reports it as externally managed. The browser
+cannot remove or replace that source. `india_devnet` accepts only this process-managed
+credential source, and its trading approval lasts only for the current server process.
+
+## What you can ask
+
+```text
+What is the current BTCUSD mark price and 24-hour range?
+Show the options chain for BTC expiring this Friday.
+What positions do I have open?
+List my fills from the last 24 hours grouped by symbol.
+How much USDT is free and how much is blocked in margin?
+Place this order as a dry run.
+```
+
+The assistant selects the tool. You do not need to name one.
+
+## Skills
+
+A skill is a written procedure for a task that needs more than one tool. It defines the
+tool sequence, calculations, and output. The server includes three procedures:
+
+| Skill | Task | Account access needed to run it |
+|---|---|---|
+| `pnl-analytics` | Review P&L and trading performance | yes |
+| `position-risk` | Report open positions and risk | yes |
+| `funding-carry` | Compare perpetual funding rates | no |
+
+The P&L procedure exports fills to a local CSV. The installed `delta-exchange-pnl` command
+matches fills in first-in, first-out order and calculates the report. The procedure then
+writes an HTML dashboard to `~/.delta-exchange-mcp/reports/`. The raw fill history does not
+need to enter the conversation.
+
+Every procedure is readable before account setup. `list_skills` lists each procedure and
+its account requirement. `get_skill` reads the procedure or a supporting file. Clients can
+also read resources under `skill://delta/<name>` or use the prompt for each procedure.
+Account calls check credentials when called. These procedures do not place orders.
+
+## Authorization behavior
+
+The server always advertises the same market, account, export, status, and trading tools.
+Connecting an account or enabling trading does not add or remove tools.
+
+When a call needs input:
+
+- An account call without a connection returns `input_required` and opens Manage Connection.
+- A real trading call without approval returns `input_required` and opens the same page.
+- A resumed request reports authorization state and never executes the blocked trade. Submit
+  a new call only if the user still wants the trade.
+- A call with `dry_run=true` sends no mutation and needs no trading approval.
+
+Call `get_connection_status` to see the selected environment, credential source, validation
+state, account ID when available, exact client name, and trading state. It never returns a
+key, secret, signature, or credential digest.
+
+### Trading approval
+
+One approval enables all 13 trading tools for the exact client-provided name, selected
+environment, and current credential revision. Approval persists across restarts when the
+operating-system credential service is available. An unnamed client gets approval only for
+the current process.
+
+Production approval requires a separate acknowledgement that real orders can be placed.
+The checkbox starts clear. Trading tools have no built-in notional or position-size cap.
+Delta sizes orders in contracts, not coins.
+
+Approval has no time expiry in this version. The server revokes it after credential rotation,
+automatic migration, environment change, disconnect, manual disable, or a changed client
+name. `DELTA_MCP_MODE=trade` has no authorization effect.
+
+The client name is self-reported. It partitions consent records but does not authenticate a
+local MCP client. A local client can copy another client's name. This threat is outside the
+current design boundary. The operating-system user account is the security boundary.
+
+### Mutation safeguards
+
+- All 13 trading tools support `dry_run=true`.
+- A real mutation checks current consent immediately before the request.
+- A tool that performs a read preflight checks consent again after the preflight.
+- `POST`, `PUT`, and `DELETE` requests are never retried automatically after a transport
+  failure.
+- Real and dry-run mutations are recorded in an owner-only audit log by default. Credential
+  material and request signatures are not logged.
 
 ## Install in your MCP client
 
-`DELTA_API_KEY` / `DELTA_API_SECRET` are **optional** in every snippet below — drop them for public-data-only mode. Set `DELTA_MCP_ENV=india_testnet` for testnet.
+Every entry below starts the same local stdio server. Do not add an environment block for
+credentials, environment selection, or trading mode. Manage those settings in the browser
+after the server starts.
 
-### Claude Code
+### Let your coding agent install it
 
-```bash
-claude mcp add delta-exchange-mcp \
-  --scope user \
-  --env DELTA_MCP_ENV=india_prod \
-  --env DELTA_API_KEY=your-api-key \
-  --env DELTA_API_SECRET=your-api-secret \
-  -- uvx delta-exchange-mcp
+Send the agent this instruction:
+
+```text
+Install the Delta Exchange MCP server by following
+https://raw.githubusercontent.com/delta-exchange/delta-exchange-mcp/main/AGENT-INSTALL.md
+Do not ask me for an API key or secret.
 ```
 
-`--scope user` makes the server available across all projects. Verify with `claude mcp list`.
+The canonical instructions are in [`AGENT-INSTALL.md`](AGENT-INSTALL.md).
 
 ### Cursor
 
-Global: `~/.cursor/mcp.json` (or `%USERPROFILE%\.cursor\mcp.json` on Windows). Project-scoped alternative: `.cursor/mcp.json` in the repo root.
+[![Add to Cursor][cursor-badge]][cursor-link]
+
+For a manual global entry, use `~/.cursor/mcp.json` on macOS or Linux, or
+`%USERPROFILE%\.cursor\mcp.json` on Windows:
 
 ```json
 {
   "mcpServers": {
     "delta-exchange-mcp": {
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
 ```
 
-Restart Cursor or open **Settings → Tools & MCP** to refresh.
+### VS Code
 
-### Codex
+[![Install in VS Code][vs-code-badge]][vs-code-link]
 
-Add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.delta-exchange-mcp]
-command = "uvx"
-args = ["delta-exchange-mcp"]
-env = { DELTA_MCP_ENV = "india_prod", DELTA_API_KEY = "your-api-key", DELTA_API_SECRET = "your-api-secret" }
-```
-
-### Windsurf
-
-Add to `~/.codeium/windsurf/mcp_config.json` (macOS / Linux) or `%USERPROFILE%\.codeium\windsurf\mcp_config.json` (Windows). UI route: **Settings → Cascade → Plugins (MCP servers) → Manage Plugins → View raw config**.
-
-```json
-{
-  "mcpServers": {
-    "delta-exchange-mcp": {
-      "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
-    }
-  }
-}
-```
-
-### Zed
-
-Add to `~/.config/zed/settings.json` (user-level) or `.zed/settings.json` (project-level). Zed uses the top-level key `context_servers` and nests `command` as an object — note the shape difference from other clients:
-
-```json
-{
-  "context_servers": {
-    "delta-exchange-mcp": {
-      "command": {
-        "path": "uvx",
-        "args": ["delta-exchange-mcp"],
-        "env": {
-          "DELTA_MCP_ENV": "india_prod",
-          "DELTA_API_KEY": "your-api-key",
-          "DELTA_API_SECRET": "your-api-secret"
-        }
-      }
-    }
-  }
-}
-```
-
-### VS Code (GitHub Copilot)
-
-Add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and each entry needs an explicit `"type": "stdio"`:
+For `.vscode/mcp.json`:
 
 ```json
 {
@@ -125,299 +231,205 @@ Add to `.vscode/mcp.json` in your workspace. The top-level key is `servers` and 
     "delta-exchange-mcp": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
 ```
 
-### Claude Desktop
-
-Open **Settings → Developer → Edit config**, or edit directly at:
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "delta-exchange-mcp": {
-      "command": "uvx",
-      "args": ["delta-exchange-mcp"],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod",
-        "DELTA_API_KEY": "your-api-key",
-        "DELTA_API_SECRET": "your-api-secret"
-      }
-    }
-  }
-}
-```
-
-Quit and relaunch Claude Desktop for changes to take effect.
-
-## Running a dev / unreleased branch
-
-To test an unreleased commit, branch, or fork before it's on PyPI, swap `uvx delta-exchange-mcp` for `uvx --from git+<repo-url>@<ref> delta-exchange-mcp`. `<ref>` can be a branch, tag, or commit SHA.
-
-CLI sanity check:
+### Claude Code
 
 ```bash
-uvx --from git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop delta-exchange-mcp --help
+claude mcp add delta-exchange-mcp --scope user -- uvx delta-exchange-mcp
 ```
 
-`uv` caches the git resolution, so to pick up new commits on the same branch:
+### Codex
 
 ```bash
-uvx --refresh --from git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop delta-exchange-mcp --help
+codex mcp add delta-exchange-mcp -- uvx delta-exchange-mcp
 ```
 
-### In your MCP client config
+For the Codex desktop app, open **Plugins**, choose **MCPs**, and select **Connect to a
+custom MCP**. Keep the type as STDIO. Use `uvx` as the command and
+`delta-exchange-mcp` as the only argument. Leave environment values empty.
 
-Replace `args` in any snippet above with the `git+` form. Three flavours:
+### Windsurf
 
-**Claude Code:**
+Add the same `mcpServers` entry shown for Cursor to
+`~/.codeium/windsurf/mcp_config.json` on macOS or Linux, or
+`%USERPROFILE%\.codeium\windsurf\mcp_config.json` on Windows.
 
-```bash
-claude mcp add delta-exchange-mcp-dev \
-  --scope user \
-  --env DELTA_MCP_ENV=india_prod \
-  -- uvx --from git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop delta-exchange-mcp
-```
+### Zed
 
-**Cursor / Windsurf / Claude Desktop (any `mcpServers` JSON):**
-
-```json
-{
-  "mcpServers": {
-    "delta-exchange-mcp-dev": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop",
-        "delta-exchange-mcp"
-      ],
-      "env": {
-        "DELTA_MCP_ENV": "india_prod"
-      }
-    }
-  }
-}
-```
-
-**Zed (nested `command` object):**
+Zed uses `context_servers` in `~/.config/zed/settings.json`:
 
 ```json
 {
   "context_servers": {
-    "delta-exchange-mcp-dev": {
-      "command": {
-        "path": "uvx",
-        "args": [
-          "--from",
-          "git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop",
-          "delta-exchange-mcp"
-        ],
-        "env": {
-          "DELTA_MCP_ENV": "india_prod"
-        }
-      }
+    "delta-exchange-mcp": {
+      "command": "uvx",
+      "args": ["delta-exchange-mcp"]
     }
   }
 }
 ```
 
-Register the dev server under a separate name (e.g. `delta-exchange-mcp-dev`) so it doesn't collide with the PyPI install. The git+URL form rebuilds from source on each launch and is meant for testing unreleased changes — stick with `uvx delta-exchange-mcp` for everyday use.
+## Safety
+
+The server trusts the local MCP client. A process that has the Manage Connection URL
+can obtain its page cookie and CSRF token and request connection or consent changes.
+The page does not independently verify user identity or presence. This is an accepted
+exception to the MCP URL elicitation security requirements. Read the
+[local security model](docs/security.md) before you connect a client.
+
+- The MCP transport is local stdio. There is no shared hosted Delta MCP endpoint.
+- The browser setup listener binds to `127.0.0.1` on a random port. It closes after ten
+  minutes, after the user enables trading, or when the MCP process stops.
+- The listener checks the exact Host and Origin, requires JSON, limits the request body,
+  uses an HTTP-only session cookie, and rotates a one-use CSRF value.
+- Browser responses disable caching and framing and use a restrictive content security
+  policy.
+- The server serializes browser mutations. A stale page cannot replace a newer credential
+  or restore revoked trading approval.
+
+## API request analytics
+
+Delta API requests carry a small set of headers that identify the MCP client and tool that
+caused the request. Delta uses these headers to measure client and tool usage. The client
+name is self-reported. The authorization layer uses its exact value to partition consent
+records, but the name is not proof of identity and cannot grant consent by itself.
+
+| Header | Value |
+|---|---|
+| `X-Delta-MCP-Version` | This server's version. |
+| `X-Delta-MCP-Client` | The exact name reported by the MCP client, when available. |
+| `X-Delta-MCP-Client-Version` | The version reported by the MCP client, when available. |
+| `X-Delta-MCP-Tool` | The MCP tool that caused the Delta request. |
+| `X-Delta-MCP-Protocol` | The MCP protocol version for the request. |
+| `X-Delta-MCP-Context` | The operating system and architecture, Python major and minor version, presence of sampling, elicitation, roots and tasks, and counts of experimental and extension capabilities. Private extension names and settings are not included. |
+
+The server does not add the Delta environment, trading state, credential source, consent
+state, credential or consent revision, account ID, API key, API secret, signature, or a
+credential digest to these headers. It also adds no connection or installation identifier.
+Untrusted text is encoded, and the complete analytics header set is limited to 4,096 bytes.
+The server does not forward the client's title, description, website, or icons. Client
+names and versions are still supplied by the client. Do not put personal information in
+these fields.
+
+Set `DELTA_MCP_ANALYTICS=off` in the MCP client's process environment to omit all six
+analytics headers. The required User-Agent and authentication headers still apply.
+The package does not store an analytics history locally. Delta API infrastructure receives
+the headers with each request. Its log retention is controlled outside this package;
+this repository does not define or promise a retention period for those logs.
 
 ## Updating
 
-`uvx` caches the resolved package, so a new PyPI release isn't picked up automatically. To move to the latest version:
+`uvx` caches resolved packages. Refresh the package, then reconnect the server or restart
+the MCP client:
 
-1. **If your config pins a version** (`uvx "delta-exchange-mcp==0.1.1"`), bump the pin to the new version, or drop it to float to latest.
-2. **Refresh the `uvx` cache** so it fetches the new build:
-
-   ```bash
-   uvx --refresh delta-exchange-mcp --help
-   ```
-
-3. **Reload the server** so your client respawns the process — in Claude Code, run `/mcp` and reconnect `delta-exchange-mcp`, or restart the client. Other clients: restart the app.
-
-New tools appear only after the respawn. The MCP `list_changed` notification refreshes the tool list of an already-running server; it does **not** swap the underlying package version, which always requires a restart.
-
-1. Create a key at [delta.exchange/app/account/manageapikeys](https://www.delta.exchange/app/account/manageapikeys) (testnet: [demo.delta.exchange](https://demo.delta.exchange/app/account/manageapikeys)).
-2. Both `api_key` and `api_secret` are shown **once at creation**. Save the secret immediately; it can't be re-derived.
-3. **Read Data** permission is enough. Trading permission is not required and not used.
-4. Recommended: whitelist your IP on the key. Delta blocks non-whitelisted IPs and surfaces your current IP in the error message if it fires.
-5. **Match the environment**: prod keys with `DELTA_MCP_ENV=india_prod`, demo keys with `DELTA_MCP_ENV=india_testnet`. Mixing them returns `InvalidApiKey`.
-
-## Environment variables
-
-| Var | Default | Purpose |
-|---|---|---|
-| `DELTA_MCP_ENV` | `india_prod` | `india_prod`, `india_testnet`, or `india_devnet`. |
-| `DELTA_API_KEY` | _(unset)_ | API key. Optional; when set with `DELTA_API_SECRET`, account tools register. |
-| `DELTA_API_SECRET` | _(unset)_ | API secret matching `DELTA_API_KEY`. |
-| `DELTA_MCP_MODE` | `read` | `trade` registers the trading tools (requires API key + secret). Default `read` is read-only. See [Trading](#trading-opt-in). |
-| `DELTA_MCP_DEBUG` | _(unset)_ | `1`/`true`/`yes`/`on` writes HTTP request URLs and response bodies to a log file (see [Debugging](#debugging--reporting-a-bug)). |
-| `DELTA_MCP_DEBUG_FILE` | _(auto)_ | Override the debug log path. Default: `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`. |
-| `DELTA_MCP_AUDIT` | _(on in trade mode)_ | Set `off`/`false`/`0`/`no` to disable the trading audit log. On by default whenever `DELTA_MCP_MODE=trade`. |
-| `DELTA_MCP_AUDIT_FILE` | _(auto)_ | Override the audit log path. Default: `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`. |
-
-## Debugging / reporting a bug
-
-To capture exactly what the server sends and receives — useful when a tool returns
-something unexpected — set `DELTA_MCP_DEBUG=1` in your MCP client config:
-
-```jsonc
-"delta-exchange": {
-  "command": "uvx",
-  "args": ["delta-exchange-mcp"],
-  "env": {
-    "DELTA_MCP_ENV": "india_prod",
-    "DELTA_MCP_DEBUG": "1"
-  }
-}
+```bash
+uvx --refresh delta-exchange-mcp --version
 ```
 
-Restart the client and re-run the action. Each HTTP call (request URL incl. filter params +
-response body + status) is logged to `~/.delta-exchange-mcp/logs/`. The exact path is printed
-on startup and you can also just **ask the assistant: _"where is the debug log?"_** (the
-`get_debug_status` tool returns it).
+If the client pins an exact package version, update that version first.
 
-> The log **never** contains your API key, secret, or request signatures — but response bodies
-> **do** contain your account data (balances, positions, transactions). **Review before sharing.**
+## Troubleshooting
 
-## Tools
+### The browser did not open
 
-### Public market data (always available)
+Ask the assistant to call `setup_credentials`. Open the clickable Manage Connection link in
+the result. The link expires after ten minutes. Request a new link if it has expired.
 
-| Tool | What it returns |
-|---|---|
-| `list_products` / `get_product` | Catalog of tradable instruments and per-product metadata. |
-| `list_tickers` / `get_ticker` | Last price, 24h stats, mark price, OI. |
-| `get_options_chain` | Option chain snapshot for a given underlying / expiry. |
-| `get_orderbook` | Bid/ask depth for a symbol. |
-| `get_recent_trades` | Last N public trades. |
-| `get_candles` | OHLC candles by resolution. |
-| `get_funding_history` / `get_mark_price_history` / `get_oi_history` | Historical funding-rate, mark-price, and open-interest candles. |
-| `get_settlement_prices` | Settlement prices for expired / settled derivatives. |
-| `get_indices` | Spot price indices Delta builds from multiple exchanges. |
-| `get_reference_data` | Assets + indices reference. |
+### The connection is not persistent
 
-### Account read-only (requires `DELTA_API_KEY` + `DELTA_API_SECRET`)
+Call `get_connection_status` and inspect the credential source. `process_memory` means the
+server found no approved operating-system credential service. Install or unlock the native
+credential service and reconnect. The server does not write a plaintext fallback.
 
-| Tool | What it returns |
-|---|---|
-| `get_positions` / `get_margined_positions` | Open positions, sizes, entry, unrealized PnL. |
-| `get_wallet_balances` / `get_wallet_transactions` | Per-asset balances + ledger. |
-| `get_open_orders` / `get_order_history` / `get_order_by_id` | Active and historical orders. |
-| `get_fills` / `bulk_fills_export` | Own trade fills; bulk CSV export of fills to disk. |
-| `get_product_leverage` | Per-product leverage setting. |
-| `get_trading_stats` / `get_trading_preferences` / `get_profile` | Account-level stats, preferences, profile. |
+### The browser cannot replace the credential
 
-### Trading (opt-in)
+The status can report `process_environment`. This means the MCP client or its launcher
+supplied the credential. Remove it from that external source, restart the server, and use
+Manage Connection. The browser does not overwrite externally managed credentials.
 
-Trading tools register **only** when `DELTA_MCP_MODE=trade` is set alongside valid credentials. Without it the server stays read-only.
+### A trading call still reports input required
 
-| Tool | Action |
-|---|---|
-| `place_order` / `edit_order` / `cancel_order` | Single limit/market/stop order lifecycle. |
-| `cancel_all_orders` | Cancel open orders (optionally filtered by product / contract type). |
-| `place_batch_orders` / `edit_batch_orders` / `cancel_batch_orders` | Up to 50 orders on one contract per request. |
-| `place_bracket_order` / `edit_bracket_order` | Attach / edit a take-profit + stop-loss bracket. |
-| `set_product_leverage` | Set order leverage for a product. |
-| `adjust_position_margin` | Add / remove isolated margin on a position. |
-| `close_all_positions` | Close all open positions (your `user_id` is resolved automatically from your profile). |
-| `configure_auto_topup` | Toggle per-position auto top-up. |
+Approval binds to the exact client name, environment, and credential revision. Rotation,
+migration, environment change, disconnect, manual disable, or a different client name ends
+the old approval. Open Manage Connection and approve the current binding.
 
-Enable it in your client config:
+### An old installation has plaintext credentials
 
-```jsonc
-"delta-exchange": {
-  "command": "uvx",
-  "args": ["delta-exchange-mcp"],
-  "env": {
-    "DELTA_MCP_ENV": "india_prod",
-    "DELTA_API_KEY": "your-api-key",
-    "DELTA_API_SECRET": "your-api-secret",
-    "DELTA_MCP_MODE": "trade"
-  }
-}
+Start the current server once and call `get_connection_status`. A successful automatic
+migration reports the operating-system credential source and removes only the key and secret
+lines from the old file. If migration cannot complete, it leaves the file unchanged. The
+server reports the problem and does not use the plaintext pair.
+
+### `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`
+
+Version 0.4.1 and earlier allowed an incompatible MCP SDK release. Refresh to the current
+package:
+
+```bash
+uvx --refresh delta-exchange-mcp --version
 ```
 
-Safety features:
+## Debugging
 
-- **Dry run.** Every mutating tool takes a `dry_run` flag. When `true`, the tool validates and returns the exact payload it *would* send, without sending it. Ask the assistant to "place the order as a dry run first."
-- **Audit log.** Every mutation (real or dry-run) is appended as one JSON line to `~/.delta-exchange-mcp/audit/` (owner-only `0600`). On by default in trade mode; disable with `DELTA_MCP_AUDIT=off`. The log records the tool, params, and result/order id — **never** credentials. Ask the assistant "where is the audit log?" (the `get_trading_status` tool returns the path).
-- **No silent retries.** Unlike GET reads, mutations are never auto-retried on timeout or rate-limit — a failure is surfaced, not re-sent.
-- **API key permission.** The key must have Trading enabled in Delta API management, and the requesting IP whitelisted.
+Set `DELTA_MCP_DEBUG=1` in the MCP process environment and restart the client. The server
+writes each Delta request URL, response status, and response body under
+`~/.delta-exchange-mcp/logs/`. Ask the assistant to call `get_debug_status` for the exact
+path.
 
-## Example prompts
-
-Once connected, you can ask things like:
-
-- "What's the current BTCUSD mark price and 24h range?"
-- "Show the options chain for BTC expiring this Friday."
-- "What positions do I have open and what's my total unrealized PnL?"
-- "List my fills from the last 24 hours grouped by symbol."
-- "How much USDT do I have free vs blocked in margin?"
-
-The assistant picks the right tool based on the question. You don't need to name the tool.
+The log excludes API keys, secrets, signatures, and signing timestamps. Response bodies can
+contain account data. Review a log before you share it.
 
 ## Development
 
-```bash
-uv sync                       # install deps
-uv run pytest                 # run tests (no network, respx-mocked)
-uv run ruff check src tests   # lint
-uv run delta-exchange-mcp     # run server (stdio)
-```
-
-### Testing with MCP Inspector
+Use Python 3.12 or later and Node.js 22 or later for development. The test suite uses
+Node.js to parse the generated browser JavaScript. End users do not need Node.js.
 
 ```bash
-# stdio CLI mode
+uv sync --locked
+uv run pytest
+uv run ruff check src tests scripts packaging
 bash scripts/inspect.sh --cli --method tools/list
-bash scripts/inspect.sh --cli --method tools/call \
-  --tool-name get_ticker --tool-arg symbol=BTCUSD
-
-# with auth
-DELTA_API_KEY=... DELTA_API_SECRET=... \
-  bash scripts/inspect.sh --cli --method tools/call --tool-name get_wallet_balances
-
-# web UI
-bash scripts/inspect.sh        # → http://localhost:6274
+bash scripts/inspect.sh --cli --method tools/call --tool-name get_ticker --tool-arg symbol=BTCUSD
 ```
 
-Maintainers: see [`RELEASING.md`](RELEASING.md) for the release procedure.
+To test an unreleased branch, use:
 
-## Roadmap
+```bash
+uvx --refresh --from git+https://github.com/delta-exchange/delta-exchange-mcp.git@develop \
+  delta-exchange-mcp --version
+```
 
-- **Now**: 14 public market-data + 13 authenticated read-only account tools + 13 trading tools (opt-in via `DELTA_MCP_MODE=trade`, with dry-run and an audit log).
-- **Next**: richer guardrails (notional / position-size caps, confirmation prompts).
+Register an unreleased build under a different MCP server name so it does not replace the
+published package during testing. Maintainers can find the release procedure in
+[`RELEASING.md`](RELEASING.md).
 
-## Feedback & issues
+## Feedback and issues
 
-This is the first public cut and we want to make it better. Please file:
+Please file bugs, missing tools, incorrect fields, and setup failures in
+[GitHub Issues](https://github.com/delta-exchange/delta-exchange-mcp/issues). Redact API keys,
+secrets, and account data from screenshots and logs.
 
-- Bugs (incorrect data, signing/auth errors, crashes)
-- Missing tools or fields you'd want exposed
-- Rough edges in setup, docs, or error messages
-- Anything you'd build on top of this if a primitive existed
+---
 
-→ [github.com/delta-exchange/delta-exchange-mcp/issues](https://github.com/delta-exchange/delta-exchange-mcp/issues)
+<div align="center">
 
-Please redact `api_key` / `api_secret` from any logs or screenshots before attaching.
+[MIT licence](https://github.com/delta-exchange/delta-exchange-mcp/blob/main/LICENSE) · [Source](https://github.com/delta-exchange/delta-exchange-mcp) · [Issues](https://github.com/delta-exchange/delta-exchange-mcp/issues) · [PyPI](https://pypi.org/project/delta-exchange-mcp/)
 
-## Safety
+</div>
 
-- **Read-only by default.** Trading tools register only with the explicit `DELTA_MCP_MODE=trade` opt-in; otherwise every tool is a GET and the server cannot place, edit, or cancel orders.
-- **Auditable mutations.** When trading is on, every mutation is dry-runnable and written to an owner-only audit log; mutations are never auto-retried.
-- **Local stdio only.** Per-user keys never leave your machine; no shared hosted endpoint.
-- **Read the code.** It's a financial-tool MCP; treat it like one.
+[beta-badge]: https://img.shields.io/badge/status-beta-orange?style=flat-square
+[pypi-version-badge]: https://img.shields.io/pypi/v/delta-exchange-mcp?style=flat-square
+[pypi-version-link]: https://pypi.org/project/delta-exchange-mcp/
+[cursor-badge]: https://img.shields.io/badge/Cursor-Add_Server-0098FF?style=for-the-badge&logo=cursor&logoColor=white
+[cursor-link]: https://cursor.com/install-mcp?name=delta-exchange-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJkZWx0YS1leGNoYW5nZS1tY3AiXX0=
+[vs-code-badge]: https://img.shields.io/badge/VS_Code-Install_Server-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white
+[vs-code-link]: https://insiders.vscode.dev/redirect/mcp/install?name=delta-exchange-mcp&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22delta-exchange-mcp%22%5D%7D
+[claude-desktop-badge]: https://img.shields.io/badge/Claude_Desktop-Download-CC785C?style=for-the-badge&logo=anthropic&logoColor=white
+[claude-desktop-link]: https://github.com/delta-exchange/delta-exchange-mcp/releases/latest/download/delta-exchange-mcp.mcpb
+[prod-keys]: https://www.delta.exchange/app/account/manageapikeys
+[testnet-keys]: https://demo.delta.exchange/app/account/manageapikeys

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Single source of truth for the delta-exchange-mcp fine-tune Q&A dataset.
 
 Holds every (question, answer) pair once and renders two artifacts:
@@ -7,14 +7,20 @@ Holds every (question, answer) pair once and renders two artifacts:
 
 Questions follow Simplified Technical English (ASD-STE100): short, one idea,
 active voice, approved verbs. Answers are comprehensive and grounded in the
-repo source (README.md, CLAUDE.md, src/) and the docs at
-https://mcp-docs-silk.vercel.app/docs.
+recorded repository source commit. External client instructions cite their docs.
 
 Run:  python finetune/generate_qna.py
 """
 
 import json
+import logging
 from pathlib import Path
+
+CONTRACT_ID = "delta.mcp-2026-browser-skills.v1"
+SOURCE_COMMIT = "45855cf043340ba1df29dc52e7bfcc3fcb2b4f8c"
+MCP_PROTOCOL_VERSION = "2026-07-28"
+TOOL_SCHEMA_SHA256 = "c5bcfc41680e14b89a3e4bab4ea9357a63e3578dcbb5fdda33b30e723cda82bc"
+TOOL_COUNT = 45
 
 # System prompt prepended to every training record. Sets the assistant persona
 # so the fine-tune answers stay in-domain and consistent.
@@ -23,7 +29,9 @@ SYSTEM = (
     "(MCP) server for Delta Exchange India. You help users install, configure, "
     "authenticate, and use its market-data, account, and trading tools. Answer "
     "accurately and concisely, and never invent tools, parameters, or behavior "
-    "that the server does not have."
+    "that the server does not have. "
+    f"This dataset describes the unreleased {CONTRACT_ID} contract at source commit "
+    f"{SOURCE_COMMIT}. Do not claim that a published package has this contract."
 )
 
 # Each section is (title, [(question, answer), ...]).
@@ -63,9 +71,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Is the server production-ready?",
-                "The server is in Beta. It works and is used internally, but the tool surface and "
-                "configuration can still change. Report bugs, missing tools, or rough edges as GitHub "
-                "issues; early reports shape what ships next.",
+                "This dataset describes an unreleased development contract. Source tests and bundle checks do not establish production readiness. A release still needs the operating-system matrix, real keyring checks, the authenticated testnet permission matrix, and acceptance in each supported MCP client. Check the published release and the running source ref before relying on a feature.",
             ),
             (
                 "What framework does the server use?",
@@ -178,10 +184,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I add the server to Google Antigravity?",
-                "Add a credential-free mcpServers entry with command `uvx` and args "
-                "`[\"delta-exchange-mcp\"]` to `~/.gemini/config/mcp_config.json`. In the IDE, open the "
-                "agent panel menu, then MCP Servers, Manage MCP Servers, and View raw config. Prefer the "
-                "global file because project-level entries can be ignored, then reopen the MCP panel.",
+                "Add an mcpServers entry with command uvx and args [\"delta-exchange-mcp\"] to the global `~/.gemini/config/mcp_config.json` or the workspace `.agents/mcp_config.json`. In Antigravity IDE, open MCP Servers, Manage MCP Servers, then View raw config. In the CLI, use `/mcp` to inspect or reload. Keep credentials out of the entry. These paths follow the current [Google Antigravity MCP documentation](https://antigravity.google/docs/mcp). Use the reviewed source ref to test this unreleased contract.",
             ),
             (
                 "How do I add the server to VS Code with GitHub Copilot?",
@@ -208,10 +211,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I pin a specific version?",
-                'Pin the version in the uvx invocation: `uvx "delta-exchange-mcp==0.6.0"`. Use 0.4.2 '
-                "or newer because earlier releases do not start with the current MCP dependency. "
-                "Without a pin, uvx can keep a cached resolution; use `uvx --refresh "
-                "delta-exchange-mcp --help` when you want it to resolve the newest release.",
+                "Pin a published package with `uvx delta-exchange-mcp==<version>`, replacing `<version>` with the intended release. This dataset describes an unreleased contract, so no published version is implied by its metadata. To reproduce it, use the recorded source commit in a git-based uvx launch. Use `--refresh` when you need uv to refresh a cached resolution.",
             ),
             (
                 "How do I run an unreleased branch or fork?",
@@ -294,9 +294,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I match the key to the environment?",
-                "Use prod keys with DELTA_MCP_ENV=india_prod and demo keys with "
-                "DELTA_MCP_ENV=india_testnet. Keys are environment-scoped on Delta's side. Mixing them "
-                "returns an InvalidApiKey error.",
+                "Select production for a production key and testnet for a demo key in Manage Connection. The process setting DELTA_MCP_ENV can fix the environment and takes precedence over browser selection. A key from one environment does not authenticate to another.",
             ),
             (
                 "Why do prod and testnet keys not interchange?",
@@ -371,21 +369,15 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "What does the audit log record?",
-                "The audit log records every mutation, real or dry-run, as one JSON line: the tool, the "
-                "request params, and the result or order id. It never records credentials. It is on by "
-                "default in trade mode and lives in an owner-only file.",
+                "The audit log records real and dry-run trading attempts that reach the shared execution function. Each JSON line includes the environment, tool, request parameters, dry-run flag, and a summarized result or error. It excludes authentication headers and secrets. Logging is on by default and uses an owner-only file. A local write failure is reported to stderr, so the log is a best-effort record.",
             ),
             (
                 "Where is the audit log?",
-                "The audit log is written to `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log` "
-                "with owner-only 0600 permissions. Override the path with DELTA_MCP_AUDIT_FILE. Ask "
-                'the assistant "where is the audit log?"; the get_trading_status tool returns the path.',
+                "The default audit path is `~/.delta-exchange-mcp/audit/audit-<environment>-<timestamp>-<pid>.log`. The server creates it with owner-only permissions. DELTA_MCP_AUDIT_FILE overrides the path. get_trading_status reports audit information for the selected environment.",
             ),
             (
                 "How do I disable the audit log?",
-                "Set DELTA_MCP_AUDIT to off, false, 0, or no. This kill switch disables the trading "
-                "audit log. The log is on by default whenever the current client's effective mode is "
-                "trade.",
+                "Set DELTA_MCP_AUDIT to off, false, 0, or no to disable audit logging. Otherwise the execution function records both real and dry-run trading attempts. The environment variable DELTA_MCP_MODE does not control authorization or enable this log.",
             ),
             (
                 "Does the server retry a failed mutation?",
@@ -456,13 +448,11 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "What does DELTA_MCP_AUDIT do?",
-                "DELTA_MCP_AUDIT controls the trading audit log. It is on by default in trade mode. Set "
-                "it to off, false, 0, or no to disable the log.",
+                "DELTA_MCP_AUDIT controls the audit log for trading attempts, including dry runs. It is on by default. Set off, false, 0, or no to disable it. Audit configuration does not grant trading consent.",
             ),
             (
                 "What does DELTA_MCP_AUDIT_FILE do?",
-                "DELTA_MCP_AUDIT_FILE overrides the audit log path. The default is "
-                "`~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`.",
+                "DELTA_MCP_AUDIT_FILE overrides the audit log path. The default is `~/.delta-exchange-mcp/audit/audit-<environment>-<timestamp>-<pid>.log`. Each record uses the environment pinned to the request.",
             ),
             (
                 "What does DELTA_MCP_CONFIG_FILE do?",
@@ -474,9 +464,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "What is the default environment?",
-                "The default DELTA_MCP_ENV is india_prod and the default mode is read. If neither the "
-                "client nor the shared settings file overrides them, the server provides public "
-                "production market data and no trading tools.",
+                "The default environment is india_prod. A process override or a browser-saved environment selection can change it. All 45 tools remain discoverable. A real mutation requires credentials and trading consent; no initial mode setting authorizes it.",
             ),
         ],
     ),
@@ -695,12 +683,11 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "What does get_trading_preferences do?",
-                "get_trading_preferences returns your trading preferences, such as margin mode and "
-                "notification settings. It takes no arguments.",
+                "get_trading_preferences returns account trading preferences from GET /v2/users/trading_preferences. It takes no arguments and requires account authorization. The shared identity check also validates the integer user_id in this endpoint's response.",
             ),
             (
                 "What does get_profile do?",
-                "get_profile is retired and is not registered. For account identity, get_trading_preferences validates the integer user_id returned by GET /v2/users/trading_preferences. close_all_positions uses the same identity helper. The server does not call GET /v2/profile for an API key.",
+                "get_profile is retired and is not registered. Read account trading preferences with get_trading_preferences. Credential validation and close_all_positions use the shared identity check for the integer user_id from GET /v2/users/trading_preferences. The server does not call GET /v2/profile for an API key.",
             ),
             (
                 "What does bulk_fills_export do?",
@@ -826,10 +813,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "What does close_all_positions do?",
-                "close_all_positions closes open positions in the scopes you set to true: "
-                "close_all_portfolio for cross/portfolio-margined positions and close_all_isolated for "
-                "isolated-margin positions. Both default to false, so you must opt into a scope. Your "
-                "user_id is resolved automatically from your profile; you do not pass it.",
+                "close_all_positions closes positions only in the scopes set to true: close_all_portfolio for cross or portfolio margin, and close_all_isolated for isolated margin. Both default to false. The server resolves user_id through trading preferences and does not accept it as a tool argument. A dry run performs no identity request or mutation.",
             ),
             (
                 "Do I pass user_id to close_all_positions?",
@@ -849,10 +833,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Does the server round my order price?",
-                "Yes. Order and bracket prices are rounded to the product's tick size. The tool looks "
-                "up tick_size (cached per process), snaps each price to the nearest multiple, and "
-                "reports any changes in a price_adjustments field on the response (adjustments on a "
-                "dry-run echo). A metadata-lookup failure never blocks the order.",
+                "The trading tools can round order and bracket prices to the product's tick size. The product metadata cache is separated by the client binding generation, so environment or credential changes do not reuse the prior lookup. The response reports adjustments. A metadata lookup failure can skip rounding, but a missing or revoked trading consent still blocks the real request.",
             ),
             (
                 "How are boolean order flags encoded?",
@@ -907,9 +888,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "Does the debug log contain my secrets?",
-                "No. The debug log never contains your API key, secret, or request signatures; those "
-                "live only in headers, which are never logged. But response bodies do contain your "
-                "account data such as balances, positions, and transactions, so review before sharing.",
+                "The debug logger does not record authentication headers, API keys, API secrets, or signatures. The API secret stays local for signing; authenticated requests send the API key and signature in headers. Debug response bodies can contain balances, positions, and transactions. Inspect and redact account data before sharing a log.",
             ),
             (
                 "What does get_debug_status do?",
@@ -931,9 +910,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I fix an InvalidApiKey error?",
-                "InvalidApiKey means the API key was not found for this environment. Prod and testnet "
-                "keys are separate, so confirm DELTA_MCP_ENV matches the dashboard the key was created "
-                "on: prod keys with india_prod, demo keys with india_testnet.",
+                "InvalidApiKey means that Delta does not find the key in the selected environment. Open Manage Connection and select the environment where the key was created. If the status reports externally managed credentials or environment, correct that MCP client's launch configuration. A permission failure is a separate error.",
             ),
             (
                 "How do I fix an UnauthorizedApiAccess error?",
@@ -947,15 +924,11 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I fix a Signature Mismatch error?",
-                "Signature Mismatch is usually clock skew or a path or query encoding bug. First sync "
-                "your clock via NTP. If it persists, capture the debug log and file an issue, because "
-                "it may indicate a signing-path problem.",
+                "A signature mismatch means that Delta cannot verify the signature with the supplied key. Check the selected environment and the key and secret pair. If they are correct, inspect signing of the exact path, query, timestamp, and body. Share only sanitized diagnostic evidence; do not expose the secret while investigating.",
             ),
             (
                 "Why does a tool return HTTP 403?",
-                "A 403 with no other cause usually means a missing User-Agent header, which Delta "
-                "requires. The server always sets it, so if you see 403 check that you did not remove "
-                "the header and that your IP is whitelisted.",
+                "HTTP 403 alone does not establish the cause. Check the Delta error code and the server's bounded hint. Possible checks include endpoint permissions, the IP allowlist, and the required User-Agent header. The standard client supplies that header. Do not replace credentials solely because a generic 403 occurred.",
             ),
             (
                 "Why do new tools not appear after an update?",
@@ -971,10 +944,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
             (
                 "How do I report a bug?",
-                "Set DELTA_MCP_DEBUG=1, reproduce the issue, and open a GitHub issue at "
-                "github.com/delta-exchange/delta-exchange-mcp/issues. Attach the relevant debug log "
-                "lines and redact api_key and api_secret first. Report incorrect data, auth or signing "
-                "errors, crashes, missing tools, or rough edges.",
+                "Report a normal bug at github.com/delta-exchange/delta-exchange-mcp/issues. Include the package version or source commit, MCP client, operating system, reproduction steps, and sanitized diagnostics. Remove credentials, connection URLs, and private account data. Send security reports privately to security@delta.exchange instead of publishing an unfixed exploit.",
             ),
             (
                 "How do I test tools with MCP Inspector?",
@@ -1017,6 +987,44 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ),
         ],
     ),
+    (
+        "Skills and local trust",
+        [
+            (
+                "What does list_skills do?",
+                "list_skills lists the packaged procedures for P&L, position risk, and funding "
+                "carry. Each entry includes its name, description, resource URI, supporting "
+                "files, and requires value. The requires value describes account access needed "
+                "to run the procedure. It does not hide the procedure before account setup.",
+            ),
+            (
+                "What does get_skill do?",
+                "get_skill reads a packaged procedure by name. Pass path to read one of its "
+                "listed supporting files. Every procedure is readable without credentials. "
+                "Account tool calls still require authorization. The path must be a key in the "
+                "packaged file map; it cannot select an arbitrary file on the computer.",
+            ),
+            (
+                "Does the connection page prove that a person approved an action?",
+                "No. The server trusts the local MCP client. A process with the Manage Connection "
+                "URL can obtain the cookie and CSRF token and request connection or consent "
+                "changes. The page does not independently verify user identity or presence. "
+                "This is an accepted exception to the MCP URL elicitation requirements. The "
+                "local client must enforce the user's instructions. Read docs/security.md for "
+                "the controls and the trust boundary.",
+            ),
+            (
+                "What does DELTA_MCP_ANALYTICS do?",
+                "DELTA_MCP_ANALYTICS controls the six X-Delta-MCP-* request headers. They report "
+                "the server version, client name and version, tool, protocol, and bounded "
+                "operating-system and capability details. They exclude client title, "
+                "description, website, icons, credentials, and account identity. Set off, "
+                "false, 0, or no in the MCP client's process environment to omit all six "
+                "headers. This setting does not change the authentication headers or local "
+                "consent identity. Upstream analytics retention is outside this package.",
+            ),
+        ],
+    ),
 ]
 
 
@@ -1031,7 +1039,7 @@ def build_pairs() -> list[tuple[str, str, str]]:
 
 def render_markdown(pairs: list[tuple[str, str, str]]) -> str:
     lines: list[str] = []
-    lines.append("# Delta Exchange MCP — Q&A dataset")
+    lines.append("# Delta Exchange MCP Q&A dataset")
     lines.append("")
     lines.append(
         "Question-and-answer pairs for fine-tuning a Claude model on "
@@ -1040,13 +1048,24 @@ def render_markdown(pairs: list[tuple[str, str, str]]) -> str:
     )
     lines.append("")
     lines.append(
-        "Questions use Simplified Technical English (short, one idea, active voice). Answers "
-        "are comprehensive and grounded in the repository source and the docs at "
-        "https://mcp-docs-silk.vercel.app/docs. The machine-readable training file is "
+        "Questions use Simplified Technical English. Answers describe the recorded repository "
+        "source commit. External client instructions cite their documentation. The training file is "
         "`delta-exchange-mcp-qna.jsonl` (Claude messages format). Regenerate both with "
         "`python finetune/generate_qna.py`."
     )
     lines.append("")
+    lines.extend([
+        f"Contract: `{CONTRACT_ID}`. Release status: **unreleased**.",
+        "",
+        f"Source: [`{SOURCE_COMMIT}`](https://github.com/delta-exchange/delta-exchange-mcp/commit/{SOURCE_COMMIT}).",
+        f"MCP protocol: `{MCP_PROTOCOL_VERSION}`. Stable tool count: {TOOL_COUNT}.",
+        f"Tool input-schema SHA-256: `{TOOL_SCHEMA_SHA256}`.",
+        "",
+        "Use this dataset only with that development contract. The package version alone "
+        "does not identify the contract. The schema check fails when the registered tool "
+        "arguments change, so maintainers must review the answers before updating this marker.",
+        "",
+    ])
     lines.append(f"**{len(pairs)} pairs.**")
     lines.append("")
     lines.append("## Contents")
@@ -1078,7 +1097,15 @@ def render_jsonl(pairs: list[tuple[str, str, str]]) -> str:
                 {"role": "user", "content": q},
                 {"role": "assistant", "content": a},
             ],
-            "metadata": {"category": category},
+            "metadata": {
+                "category": category,
+                "contract_id": CONTRACT_ID,
+                "release_status": "unreleased",
+                "source_commit": SOURCE_COMMIT,
+                "mcp_protocol_version": MCP_PROTOCOL_VERSION,
+                "tool_count": TOOL_COUNT,
+                "tool_schema_sha256": TOOL_SCHEMA_SHA256,
+            },
         }
         rows.append(json.dumps(record, ensure_ascii=False))
     return "\n".join(rows) + "\n"
@@ -1093,8 +1120,9 @@ def main() -> None:
     (here / "delta-exchange-mcp-qna.jsonl").write_text(
         render_jsonl(pairs), encoding="utf-8"
     )
-    print(f"wrote {len(pairs)} pairs to delta-exchange-mcp-qna.md and .jsonl")
+    logging.info("Wrote %s pairs to delta-exchange-mcp-qna.md and .jsonl", len(pairs))
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

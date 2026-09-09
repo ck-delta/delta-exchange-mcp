@@ -1,10 +1,18 @@
-# Delta Exchange MCP — Q&A dataset
+# Delta Exchange MCP Q&A dataset
 
 Question-and-answer pairs for fine-tuning a Claude model on [delta-exchange-mcp](https://github.com/delta-exchange/delta-exchange-mcp), the official MCP server for Delta Exchange India.
 
-Questions use Simplified Technical English (short, one idea, active voice). Answers are comprehensive and grounded in the repository source and the docs at https://mcp-docs-silk.vercel.app/docs. The machine-readable training file is `delta-exchange-mcp-qna.jsonl` (Claude messages format). Regenerate both with `python finetune/generate_qna.py`.
+Questions use Simplified Technical English. Answers describe the recorded repository source commit. External client instructions cite their documentation. The training file is `delta-exchange-mcp-qna.jsonl` (Claude messages format). Regenerate both with `python finetune/generate_qna.py`.
 
-**166 pairs.**
+Contract: `delta.mcp-2026-browser-skills.v1`. Release status: **unreleased**.
+
+Source: [`45855cf043340ba1df29dc52e7bfcc3fcb2b4f8c`](https://github.com/delta-exchange/delta-exchange-mcp/commit/45855cf043340ba1df29dc52e7bfcc3fcb2b4f8c).
+MCP protocol: `2026-07-28`. Stable tool count: 45.
+Tool input-schema SHA-256: `c5bcfc41680e14b89a3e4bab4ea9357a63e3578dcbb5fdda33b30e723cda82bc`.
+
+Use this dataset only with that development contract. The package version alone does not identify the contract. The schema check fails when the registered tool arguments change, so maintainers must review the answers before updating this marker.
+
+**170 pairs.**
 
 ## Contents
 
@@ -17,6 +25,7 @@ Questions use Simplified Technical English (short, one idea, active voice). Answ
 - [Account read-only tools](#account-read-only-tools)
 - [Trading tools (opt-in)](#trading-tools-opt-in)
 - [Debugging and troubleshooting](#debugging-and-troubleshooting)
+- [Skills and local trust](#skills-and-local-trust)
 
 ## Overview and concepts
 
@@ -30,11 +39,11 @@ MCP (Model Context Protocol) is an open standard that connects AI assistants to 
 
 ### 3. What do I get with this server?
 
-The packaged manifest declares 46 tools. The core surface has 14 public market-data tools, 13 authenticated read-only account tools, and 13 opt-in trading tools. Six more tools handle credential setup and connection, debug, and trading status. Market data always works. Account tools need an API key and secret. Trading tools also need trade mode for the current client.
+This development contract exposes 45 stable tools: 14 public market tools, 12 account tools, 13 trading tools, four setup and status tools, and two skill tools. Market data and written procedures need no key. Account calls require credentials. Real trading calls also require consent in Manage Connection. Tool discovery stays the same when authorization changes.
 
 ### 4. How many tools does the server have?
 
-The packaged manifest declares 46 tools. This includes 40 market, account, and trading tools plus six setup and status tools. The active list depends on whether credentials, debug logging, and trade mode are enabled.
+The integrated development branch exposes 45 tools. The package's published version can have a different contract. Check the dataset contract marker before training and use tools/list to inspect the running server. Credentials, trading consent, and debug settings do not change this branch's tool list.
 
 ### 5. Which exchange does the server support?
 
@@ -42,11 +51,11 @@ The server supports Delta Exchange India. Its API hosts are api.india.delta.exch
 
 ### 6. Is the server production-ready?
 
-The server is in Beta. It works and is used internally, but the tool surface and configuration can still change. Report bugs, missing tools, or rough edges as GitHub issues; early reports shape what ships next.
+This dataset describes an unreleased development contract. Source tests and bundle checks do not establish production readiness. A release still needs the operating-system matrix, real keyring checks, the authenticated testnet permission matrix, and acceptance in each supported MCP client. Check the published release and the running source ref before relying on a feature.
 
 ### 7. What framework does the server use?
 
-The server is built on FastMCP. Each tool is an @mcp.tool()-decorated async function. Tool groups live in src/delta_exchange_mcp/tools/ (market.py, account.py, trading.py) and register onto the FastMCP instance built in server.py.
+The server uses MCPServer from the mcp 2.x Python SDK. It supports MCP 2026 discovery and the legacy protocol paths supplied by that SDK. Each tool group registers decorated functions with the server before serving requests.
 
 ### 8. How is the server distributed?
 
@@ -66,7 +75,7 @@ The server is for traders who want to query markets and their account through an
 
 ### 12. What is on the roadmap?
 
-Now: 14 public market-data tools, 13 authenticated read-only account tools, and 13 opt-in trading tools with dry-run and an audit log. Next: richer guardrails such as notional and position-size caps and confirmation prompts.
+This branch provides public market data, account reads, trading tools with dry-run, browser connection management, secure credential storage, and written procedures. It does not implement order-size caps or a separate confirmation for every order. Do not treat a proposed feature as an available control.
 
 ### 13. What license does the project use?
 
@@ -88,14 +97,7 @@ Run `uvx delta-exchange-mcp --help`. uvx resolves the package from PyPI or uses 
 
 ### 17. How do I add the server to Claude Code?
 
-Run:
-
-```bash
-claude mcp add delta-exchange-mcp \
-  --scope user -- uvx delta-exchange-mcp
-```
-
-`--scope user` makes the server available across all projects. Keep credentials out of this install command. Verify with `claude mcp list`, restart the client, and then use the credential form, login command, or shared configuration file for account access.
+Run `claude mcp add delta-exchange-mcp --scope user -- uvx delta-exchange-mcp`. This installs the published package for all projects. Verify with `claude mcp list`, then ask the assistant to connect your Delta account. Use the local Manage Connection page to enter credentials. A development contract requires an explicit source ref in the launch command.
 
 ### 18. How do I verify the server in Claude Code?
 
@@ -149,15 +151,15 @@ The entry itself uses the usual flat command and args fields. Configure credenti
 
 ### 24. How do I add the server to Google Antigravity?
 
-Add a credential-free mcpServers entry with command `uvx` and args `["delta-exchange-mcp"]` to `~/.gemini/config/mcp_config.json`. In the IDE, open the agent panel menu, then MCP Servers, Manage MCP Servers, and View raw config. Prefer the global file because project-level entries can be ignored, then reopen the MCP panel.
+Add an mcpServers entry with command uvx and args ["delta-exchange-mcp"] to the global `~/.gemini/config/mcp_config.json` or the workspace `.agents/mcp_config.json`. In Antigravity IDE, open MCP Servers, Manage MCP Servers, then View raw config. In the CLI, use `/mcp` to inspect or reload. Keep credentials out of the entry. These paths follow the current [Google Antigravity MCP documentation](https://antigravity.google/docs/mcp). Use the reviewed source ref to test this unreleased contract.
 
 ### 25. How do I add the server to VS Code with GitHub Copilot?
 
-Use the Install in VS Code button in the README. VS Code creates the local stdio entry and asks for the environment, API key, and secret through its own inputs. The credential inputs are masked. Leave both credential prompts empty for public market data. Do not put placeholder credentials in `.vscode/mcp.json`.
+Add a stdio server to `.vscode/mcp.json` under `servers` with command `uvx` and args `["delta-exchange-mcp"]`. Keep credentials out of this entry. Start the server, then ask to connect your Delta account and open Manage Connection. The published package must support this browser flow; pin the reviewed development ref when testing unreleased behavior.
 
 ### 26. How do I add the server to Claude Desktop?
 
-Download the Claude Desktop MCP bundle from the README and open it. Claude Desktop shows a form, installs the server, and fetches uv and Python itself. Leave the key and secret empty for public market data. Manual JSON is only a fallback; its mcpServers entry needs command `uvx` and args `["delta-exchange-mcp"]`, with no credentials.
+Open the matching MCPB release asset in Claude Desktop. The bundle installs its own uv and Python runtime. This branch's manifest does not request an API key, secret, environment, or trading mode. Connect through Manage Connection after installation. Use a bundle built from the same development contract when testing an unreleased branch.
 
 ### 27. Where is the Claude Desktop config file?
 
@@ -165,19 +167,19 @@ macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`. Window
 
 ### 28. Are the API key and secret required in the config?
 
-No. Normal client install entries contain no credentials and start with public market data. For account access, use the in-chat credential form, run `uvx delta-exchange-mcp login`, edit `~/.delta-exchange-mcp/config.env`, or use a client's own masked credential fields. Configure both the key and its matching secret.
+No. The install entry starts the server with public data and a stable tool list. For account calls, open Manage Connection and enter the key and secret there. A complete process-environment credential pair remains a compatibility source, but the browser cannot rotate or remove that source. Do not paste credentials into the conversation or shared settings file.
 
 ### 29. How do I run the testnet instead of production?
 
-Choose the practice site in the credential form, or set `DELTA_MCP_ENV=india_testnet` through the login command or `~/.delta-exchange-mcp/config.env`. Use a demo key created at demo.delta.exchange because production and testnet keys are separate. A client setting can override the shared environment.
+Open Manage Connection, select the practice environment `india_testnet`, and connect a key created at demo.delta.exchange. You can also pin `DELTA_MCP_ENV=india_testnet` in the MCP client's process environment. A pinned environment takes precedence over browser selection. A production key does not work on testnet.
 
 ### 30. How do I pin a specific version?
 
-Pin the version in the uvx invocation: `uvx "delta-exchange-mcp==0.6.0"`. Use 0.4.2 or newer because earlier releases do not start with the current MCP dependency. Without a pin, uvx can keep a cached resolution; use `uvx --refresh delta-exchange-mcp --help` when you want it to resolve the newest release.
+Pin a published package with `uvx delta-exchange-mcp==<version>`, replacing `<version>` with the intended release. This dataset describes an unreleased contract, so no published version is implied by its metadata. To reproduce it, use the recorded source commit in a git-based uvx launch. Use `--refresh` when you need uv to refresh a cached resolution.
 
 ### 31. How do I run an unreleased branch or fork?
 
-Swap `uvx delta-exchange-mcp` for the git form: `uvx --from git+<repo-url>@<ref> delta-exchange-mcp`. `<ref>` can be a branch, tag, or commit SHA. The git form rebuilds from source on each launch and is for testing unreleased changes.
+Launch `uvx --from git+https://github.com/delta-exchange/delta-exchange-mcp@<ref> delta-exchange-mcp`, replacing `<ref>` with a reviewed branch or immutable commit. Restart the server process after changing the launch entry. uv can cache a resolved ref; use its refresh option when checking new commits on the same branch.
 
 ### 32. How do I pick up new commits on the same dev branch?
 
@@ -197,7 +199,7 @@ uvx caches the resolved package, so a new PyPI release is not picked up on the n
 
 ### 36. Does the list_changed notification update the package version?
 
-No. The MCP list_changed notification refreshes the tool list of an already-running server. It does not swap the underlying package version. A version change always requires a client restart so the process respawns.
+No. A protocol notification does not replace the running Python package. Update the launch source or cached package and restart the server process. This branch keeps its tool list stable across credential and consent changes.
 
 ### 37. What does --scope user do in Claude Code?
 
@@ -213,7 +215,7 @@ Run `uv run delta-exchange-mcp` from the repo. It starts the server over stdio, 
 
 ### 40. Which clients does the server support?
 
-Claude Code, Cursor, Codex, OpenClaw, Windsurf, Zed, Google Antigravity, VS Code with GitHub Copilot, and Claude Desktop. Editor clients normally launch a local `uvx delta-exchange-mcp` subprocess. Claude Desktop can instead install the MCP bundle, which fetches its own runtime and collects configuration through a form.
+Any compatible local stdio MCP client can call the tools. Setup uses URL elicitation when supported, an MCP App that asks the host to open a link, or a clickable text link. Browser or host acceptance must be tested for the exact client version; protocol support alone does not prove that each client renders the setup flow.
 
 ## Authentication and API keys
 
@@ -223,11 +225,11 @@ Create a key at delta.exchange/app/account/manageapikeys for production, or at d
 
 ### 42. Can I recover a lost API secret?
 
-No. The api_secret is shown once at creation and cannot be re-derived. If you lose it, create a new key and replace the old credentials through the in-chat form, the login command, the shared configuration file, or your client's secure credential fields.
+Delta shows the secret when it creates the key. If you lose it, create a new pair and replace the stored pair in Manage Connection. If the MCP client's process environment supplies credentials, update that client configuration and restart its server process. The browser cannot change an externally managed source.
 
 ### 43. Which permission does the API key need?
 
-Read Data permission is enough for the account read-only tools. Trading permission is not required and not used by the read-only surface. Enable Trading only if you opt into trade mode.
+The key needs permission for each endpoint that you call. Account identity validation uses GET /v2/users/trading_preferences. Current repository evidence does not establish that Read Data alone permits that endpoint. Real trading requires Trading permission. The release check uses separate Read Data and Trading testnet keys and records each endpoint's result.
 
 ### 44. Should I whitelist my IP on the key?
 
@@ -235,7 +237,7 @@ A read-only key needs no IP whitelist. Delta requires an IP whitelist when the k
 
 ### 45. How do I match the key to the environment?
 
-Use prod keys with DELTA_MCP_ENV=india_prod and demo keys with DELTA_MCP_ENV=india_testnet. Keys are environment-scoped on Delta's side. Mixing them returns an InvalidApiKey error.
+Select production for a production key and testnet for a demo key in Manage Connection. The process setting DELTA_MCP_ENV can fix the environment and takes precedence over browser selection. A key from one environment does not authenticate to another.
 
 ### 46. Why do prod and testnet keys not interchange?
 
@@ -259,57 +261,57 @@ Delta requires a User-Agent header. A missing one returns HTTP 403. The server a
 
 ### 51. Do my API keys leave my machine?
 
-The server sends your API key directly to Delta over HTTPS in an authenticated request header. Your API secret stays on your machine and signs each request locally. Neither credential passes through the AI model or a shared MCP endpoint.
+The secret stays in the local signing process and the native credential service, or process memory when no approved service is available. Authenticated requests send the API key and an HMAC signature to the selected Delta API. They do not send the API secret. The local MCP client and operating-system user are trusted by this design.
 
 ### 52. Does the AI model ever see my credentials?
 
-No, if you use a supported credential route. The in-chat form runs outside the conversation, the login command hides terminal input, and the shared file stays local. Never paste a key or secret into an ordinary chat message. The server sends the API key directly to Delta over HTTPS, uses the secret locally to sign requests, and writes neither credential to the debug or audit logs.
+The supported browser flow does not pass typed credentials through MCP tool arguments, tool results, or model context. setup_credentials has no key or secret parameter. Enter credentials only in Manage Connection. This assumes a trusted local MCP client; the server does not provide independent authentication of a client that holds the connection URL.
 
 ### 53. How do I register the account read-only tools?
 
-Ask the assistant to connect your Delta account and use the credential form. You can also run `uvx delta-exchange-mcp login`, fill in `~/.delta-exchange-mcp/config.env`, or use a client's secure credential fields. Set both halves of the same key. The form can register the account tools in the current session; the other routes may need a connection-status check or client restart.
+Account tools are registered before the server starts, even without credentials. An unauthorized account call returns a connection request. Open Manage Connection and connect the correct environment, then make a new account call. You do not register a second set of tools or enable DELTA_MCP_MODE.
 
 ### 54. What does setup_credentials do?
 
-setup_credentials opens the in-chat form for connecting or rotating an account and for turning trade mode on or off for the current client. Call it before asking the user to use a terminal. The user types the key inside the form, outside the conversation. If the client cannot render the form, the tool returns the login-command and shared-file fallbacks. Never ask the user to paste a key or secret into chat.
+setup_credentials starts the local Manage Connection flow. It has no API key or secret arguments. The server uses URL elicitation when the client supports it, an MCP App that opens the URL, or a clickable link. The page manages credentials, environment selection, and trading consent outside model context.
 
 ### 55. Can the assistant call save_credentials or save_mode?
 
-No. save_credentials and save_mode are app-only tools called by the credential form, not by the assistant. Their schemas are hidden from the model, and each save also needs a short-lived, one-use grant bound to the protocol session that opened the form. The assistant calls setup_credentials instead.
+No. save_credentials and save_mode are removed from this development contract. The browser sends its actions directly to the loopback listener. The assistant calls setup_credentials or follows the authorization request from an account or trading tool.
 
 ### 56. What happens without credentials?
 
-Without an API key and secret, the 14 public market-data tools and the connection and credential-setup tools remain available. The account and trading tools stay off, so the server cannot read your account or place orders.
+All 45 tools remain discoverable. Public market calls, written procedures, status calls, and trading dry runs work without credentials. An account call requests connection. A real trading call also needs consent for the exact client name, environment, and credential revision.
 
 ## Security and safety
 
 ### 57. Is the server read-only by default?
 
-Yes. Trading tools register only when the current client's effective mode is trade. The credential form stores that choice for one client, or the client can set DELTA_MCP_MODE=trade itself. Otherwise every Delta API operation is a GET and the server cannot place, edit, or cancel orders.
+Real trading starts disabled because there is no consent. The trading tools are still visible and support dry_run=true. Account reads need credentials; public market data does not. Enabling consent allows real mutations, so inspect the requested action and account before enabling it.
 
 ### 58. How do I enable trading?
 
-Ask the assistant to connect your Delta account and choose Read and trade in the credential form, then restart that client. The form stores trade mode for that client only. You can instead set `DELTA_MCP_MODE=trade` in that client's own configuration; do not put the plain mode setting in the shared file. The key must have Trading permission and the requesting IP must be whitelisted.
+Open Manage Connection, select the environment, and connect the account. Enable trading for the exact MCP client name. Production also requires the unchecked real-orders acknowledgement. The server then checks consent on each real mutation. A resumed authorization request only reports status; submit a new trade call after authorization. DELTA_MCP_MODE never grants consent.
 
 ### 59. What is dry run?
 
-Dry run is a flag on every mutating tool. When dry_run is true, the tool validates the request and returns the exact payload it would send, without sending it. Use it to preview an order: ask the assistant to place it as a dry run first.
+Pass dry_run=true to a trading tool to validate and return the request payload without a POST, PUT, or DELETE. Dry runs require no credential or trading consent. A dry-run result does not prove that the exchange accepts the same live order.
 
 ### 60. What does the audit log record?
 
-The audit log records every mutation, real or dry-run, as one JSON line: the tool, the request params, and the result or order id. It never records credentials. It is on by default in trade mode and lives in an owner-only file.
+The audit log records real and dry-run trading attempts that reach the shared execution function. Each JSON line includes the environment, tool, request parameters, dry-run flag, and a summarized result or error. It excludes authentication headers and secrets. Logging is on by default and uses an owner-only file. A local write failure is reported to stderr, so the log is a best-effort record.
 
 ### 61. Where is the audit log?
 
-The audit log is written to `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log` with owner-only 0600 permissions. Override the path with DELTA_MCP_AUDIT_FILE. Ask the assistant "where is the audit log?"; the get_trading_status tool returns the path.
+The default audit path is `~/.delta-exchange-mcp/audit/audit-<environment>-<timestamp>-<pid>.log`. The server creates it with owner-only permissions. DELTA_MCP_AUDIT_FILE overrides the path. get_trading_status reports audit information for the selected environment.
 
 ### 62. How do I disable the audit log?
 
-Set DELTA_MCP_AUDIT to off, false, 0, or no. This kill switch disables the trading audit log. The log is on by default whenever the current client's effective mode is trade.
+Set DELTA_MCP_AUDIT to off, false, 0, or no to disable audit logging. Otherwise the execution function records both real and dry-run trading attempts. The environment variable DELTA_MCP_MODE does not control authorization or enable this log.
 
 ### 63. Does the server retry a failed mutation?
 
-The server retries transport errors, including timeouts, up to three total attempts for every HTTP method. A mutation can therefore reach Delta more than once when a response is lost. It does not retry mutation responses with HTTP 429 or 5xx status. If the final transport attempt fails, check open orders, order history, or the relevant account state before you retry manually.
+The server never automatically retries a POST, PUT, or DELETE. A lost response, server failure, or malformed mutation response can have an unknown outcome. Use the state checks named in the error to establish what happened before another attempt. A connection failure can report that nothing was sent. Automatic retries are limited to GET requests.
 
 ### 64. Can the server withdraw funds?
 
@@ -339,15 +341,15 @@ DELTA_MCP_ENV selects the Delta environment. Valid values are india_prod, india_
 
 ### 70. What does DELTA_API_KEY do?
 
-DELTA_API_KEY holds your API key. It is optional. When set together with DELTA_API_SECRET, the account read-only tools register. If only one half is set, the server stays on market data and prints which matching half is missing.
+DELTA_API_KEY supplies an externally managed compatibility credential from the MCP client's process environment. It must have a matching DELTA_API_SECRET. The browser cannot replace or remove a credential supplied this way. Prefer the native credential service through Manage Connection for normal setup.
 
 ### 71. What does DELTA_API_SECRET do?
 
-DELTA_API_SECRET holds the API secret that matches DELTA_API_KEY. The server uses it to sign authenticated requests. It is optional and pairs with DELTA_API_KEY. A secret without its key produces the same partial-credential warning and no account tools.
+DELTA_API_SECRET is the signing secret paired with DELTA_API_KEY in the MCP client's process environment. A partial pair fails closed for account access. A complete process pair takes precedence over a stored pair and supports consent only for that server process. Never put the secret in a prompt or log.
 
 ### 72. What does DELTA_MCP_MODE do?
 
-DELTA_MCP_MODE selects read or trade in one client's own environment. The default read is read-only. Setting trade registers the trading tools and requires a valid API key and secret. The in-chat form uses a separate client-scoped setting instead, so it does not turn on trading in every client on the machine.
+DELTA_MCP_MODE is ignored by the current authorization contract. It does not expose or hide tools and never authorizes a real trade. Enable trading through Manage Connection for the exact client, environment, and credential revision.
 
 ### 73. What does DELTA_MCP_DEBUG do?
 
@@ -359,23 +361,23 @@ DELTA_MCP_DEBUG_FILE overrides the debug log path. The default is `~/.delta-exch
 
 ### 75. What does DELTA_MCP_AUDIT do?
 
-DELTA_MCP_AUDIT controls the trading audit log. It is on by default in trade mode. Set it to off, false, 0, or no to disable the log.
+DELTA_MCP_AUDIT controls the audit log for trading attempts, including dry runs. It is on by default. Set off, false, 0, or no to disable it. Audit configuration does not grant trading consent.
 
 ### 76. What does DELTA_MCP_AUDIT_FILE do?
 
-DELTA_MCP_AUDIT_FILE overrides the audit log path. The default is `~/.delta-exchange-mcp/audit/audit-<timestamp>-<pid>.log`.
+DELTA_MCP_AUDIT_FILE overrides the audit log path. The default is `~/.delta-exchange-mcp/audit/audit-<environment>-<timestamp>-<pid>.log`. Each record uses the environment pinned to the request.
 
 ### 77. What does DELTA_MCP_CONFIG_FILE do?
 
-DELTA_MCP_CONFIG_FILE moves the shared settings file from its default path, `~/.delta-exchange-mcp/config.env`. Set this override in the client's process environment because a settings file cannot relocate itself.
+DELTA_MCP_CONFIG_FILE selects the non-secret shared settings file. Its default is `~/.delta-exchange-mcp/config.env`. The browser can write environment selection there. Credential secrets belong in the approved native credential service or process memory. A complete legacy key pair can be migrated, but legacy trading mode never becomes consent.
 
 ### 78. Which environment variables are required?
 
-None are strictly required. The server runs public market data with no variables set. Set DELTA_MCP_ENV to change environment, DELTA_API_KEY plus DELTA_API_SECRET for account tools, and DELTA_MCP_MODE=trade for trading tools.
+No environment variable is required for public market data or tool discovery. Use Manage Connection for account credentials and trading consent. A complete DELTA_API_KEY and DELTA_API_SECRET pair is an optional process compatibility source. Do not use DELTA_MCP_MODE to authorize trading.
 
 ### 79. What is the default environment?
 
-The default DELTA_MCP_ENV is india_prod and the default mode is read. If neither the client nor the shared settings file overrides them, the server provides public production market data and no trading tools.
+The default environment is india_prod. A process override or a browser-saved environment selection can change it. All 45 tools remain discoverable. A real mutation requires credentials and trading consent; no initial mode setting authorizes it.
 
 ## Market-data tools
 
@@ -515,11 +517,11 @@ get_trading_stats returns account-level trading volume and statistics. It takes 
 
 ### 113. What does get_trading_preferences do?
 
-get_trading_preferences returns your trading preferences, such as margin mode and notification settings. It takes no arguments.
+get_trading_preferences returns account trading preferences from GET /v2/users/trading_preferences. It takes no arguments and requires account authorization. The shared identity check also validates the integer user_id in this endpoint's response.
 
 ### 114. What does get_profile do?
 
-get_profile returns your user profile. It takes no arguments. The trading tools also use the profile internally to resolve your user_id for close_all_positions.
+get_profile is retired and is not registered. Read account trading preferences with get_trading_preferences. Credential validation and close_all_positions use the shared identity check for the integer user_id from GET /v2/users/trading_preferences. The server does not call GET /v2/profile for an API key.
 
 ### 115. What does bulk_fills_export do?
 
@@ -537,7 +539,7 @@ Use get_margined_positions, not get_positions. get_positions returns only entry_
 
 ### 118. When do the trading tools register?
 
-The trading tools register only when valid credentials exist and the current client's effective mode is trade. The mode can come from that client's own DELTA_MCP_MODE or from the client-scoped setting written by the credential form. Without this opt-in the server stays read-only and the trading tools do not appear.
+All 13 trading tools register before serving requests. Their presence in tools/list does not authorize a trade. The server allows dry runs without consent and requires a current consent check immediately before a real mutation, including after any preflight request.
 
 ### 119. What does place_order do?
 
@@ -597,11 +599,11 @@ adjust_position_margin adds or removes isolated margin on a position. Pass produ
 
 ### 133. What does close_all_positions do?
 
-close_all_positions closes open positions in the scopes you set to true: close_all_portfolio for cross/portfolio-margined positions and close_all_isolated for isolated-margin positions. Both default to false, so you must opt into a scope. Your user_id is resolved automatically from your profile; you do not pass it.
+close_all_positions closes positions only in the scopes set to true: close_all_portfolio for cross or portfolio margin, and close_all_isolated for isolated margin. Both default to false. The server resolves user_id through trading preferences and does not accept it as a tool argument. A dry run performs no identity request or mutation.
 
 ### 134. Do I pass user_id to close_all_positions?
 
-No. The API needs a user_id, but the tool resolves it automatically from your profile, fetches it once, and caches it per process. user_id is never a tool parameter.
+No. close_all_positions resolves user_id through the shared trading-preferences identity helper. The helper requires an integer result.user_id. Its cache is separated by the client binding generation, so changing credentials or environment does not reuse a previous account's user_id. A dry run does not fetch an account identity.
 
 ### 135. What does configure_auto_topup do?
 
@@ -613,7 +615,7 @@ Set dry_run to true, or ask the assistant to place the order as a dry run first.
 
 ### 137. Does the server round my order price?
 
-Yes. Order and bracket prices are rounded to the product's tick size. The tool looks up tick_size (cached per process), snaps each price to the nearest multiple, and reports any changes in a price_adjustments field on the response (adjustments on a dry-run echo). A metadata-lookup failure never blocks the order.
+The trading tools can round order and bracket prices to the product's tick size. The product metadata cache is separated by the client binding generation, so environment or credential changes do not reuse the prior lookup. The response reports adjustments. A metadata lookup failure can skip rounding, but a missing or revoked trading consent still blocks the real request.
 
 ### 138. How are boolean order flags encoded?
 
@@ -651,19 +653,19 @@ The debug log is at `~/.delta-exchange-mcp/logs/debug-<timestamp>-<pid>.log`, or
 
 ### 146. Does the debug log contain my secrets?
 
-No. The debug log never contains your API key, secret, or request signatures; those live only in headers, which are never logged. But response bodies do contain your account data such as balances, positions, and transactions, so review before sharing.
+The debug logger does not record authentication headers, API keys, API secrets, or signatures. The API secret stays local for signing; authenticated requests send the API key and signature in headers. Debug response bodies can contain balances, positions, and transactions. Inspect and redact account data before sharing a log.
 
 ### 147. What does get_debug_status do?
 
-get_debug_status reports the debug log path. It registers only when debug is on. Ask the assistant where the debug log is and it calls this tool.
+get_debug_status is always registered. It reports whether debug logging is enabled and the local log path when available. It does not return credentials. Enable debug logging only when needed, because response bodies can contain private account data.
 
 ### 148. What does get_trading_status do?
 
-get_trading_status reports {mode, audit_log_path}. It registers only in trade mode. Ask the assistant where the audit log is and it calls this tool.
+get_trading_status is always registered. It reports the current connection's trading state and audit information without secrets. A displayed tool or an old status response is not permission to mutate; the final consent check still applies at request time.
 
 ### 149. What does get_connection_status do?
 
-get_connection_status is always available. It reconciles safe changes to the shared settings file, then reports the environment, whether credentials and account tools are ready, the current and next-session modes, whether a restart is needed, any client overrides, the self-reported client name and scoped mode setting, the package version, and the credential-view build. It never returns a key, secret, or credential fingerprint.
+get_connection_status reconciles the current environment and credential state, then reports connection readiness, storage and validation status, client information, and trading consent without secrets. A missing or damaged native record can require reconnect. The tool never returns an API key, secret, signature, or credential fingerprint.
 
 ### 150. How do I fix a SignatureExpired error?
 
@@ -671,11 +673,11 @@ SignatureExpired means the request signature drifted more than about 5 seconds f
 
 ### 151. How do I fix an InvalidApiKey error?
 
-InvalidApiKey means the API key was not found for this environment. Prod and testnet keys are separate, so confirm DELTA_MCP_ENV matches the dashboard the key was created on: prod keys with india_prod, demo keys with india_testnet.
+InvalidApiKey means that Delta does not find the key in the selected environment. Open Manage Connection and select the environment where the key was created. If the status reports externally managed credentials or environment, correct that MCP client's launch configuration. A permission failure is a separate error.
 
 ### 152. How do I fix an UnauthorizedApiAccess error?
 
-UnauthorizedApiAccess means the API key lacks permission for that endpoint. Enable Read Data, or Trading if you use trade mode, on the key in Delta API management.
+UnauthorizedApiAccess means that the key lacks permission for the requested endpoint. It does not prove that the key itself is invalid. Check the permission required by that endpoint in Delta API management. The identity check uses trading preferences; Read Data compatibility needs the recorded testnet permission matrix.
 
 ### 153. How do I fix an ip_not_whitelisted_for_api_key error?
 
@@ -683,27 +685,27 @@ This error means your request IP is not whitelisted for the key. Add the IP show
 
 ### 154. How do I fix a Signature Mismatch error?
 
-Signature Mismatch is usually clock skew or a path or query encoding bug. First sync your clock via NTP. If it persists, capture the debug log and file an issue, because it may indicate a signing-path problem.
+A signature mismatch means that Delta cannot verify the signature with the supplied key. Check the selected environment and the key and secret pair. If they are correct, inspect signing of the exact path, query, timestamp, and body. Share only sanitized diagnostic evidence; do not expose the secret while investigating.
 
 ### 155. Why does a tool return HTTP 403?
 
-A 403 with no other cause usually means a missing User-Agent header, which Delta requires. The server always sets it, so if you see 403 check that you did not remove the header and that your IP is whitelisted.
+HTTP 403 alone does not establish the cause. Check the Delta error code and the server's bounded hint. Possible checks include endpoint permissions, the IP allowlist, and the required User-Agent header. The standard client supplies that header. Do not replace credentials solely because a generic 403 occurred.
 
 ### 156. Why do new tools not appear after an update?
 
-New tools appear only after the client respawns the server process. Refresh the uvx cache with `uvx --refresh delta-exchange-mcp --help`, then reload: in Claude Code run `/mcp` and reconnect, or restart the client. The list_changed notification alone does not swap the package version.
+Check the package version and configured source ref, then restart the MCP server process after an update. Credentials and consent do not alter this development branch's tool list. A tool absent from the advertised list can indicate a different running release, a cached client list, or an unsupported tool name.
 
 ### 157. Why does the trading tool set not appear?
 
-Trading needs a valid key and secret plus trade mode for the current client. Use the credential form and choose Read and trade, or set `DELTA_MCP_MODE=trade` in that one client's configuration. The plain mode setting is not read from the shared file. Restart the client after you enable trade mode.
+Trading tools remain visible even when trading is disabled. Inspect get_trading_status and open Manage Connection to grant consent for the correct client and environment. If the tools are absent, check the running version and source ref. DELTA_MCP_MODE does not enable them in this contract.
 
 ### 158. Why does an account tool not appear?
 
-Account tools need both halves of the same API key. Check the credential form, login command, shared configuration file, or your client's secure credential fields. A client setting takes precedence over the shared file. Ask for connection status to reconcile a safe file change, or restart the client.
+Account tools remain visible without credentials. An account call requests connection if authorization is missing. Open Manage Connection and connect a matching key, then make a new call. If the tool itself is absent, inspect the running version and source ref.
 
 ### 159. How do I report a bug?
 
-Set DELTA_MCP_DEBUG=1, reproduce the issue, and open a GitHub issue at github.com/delta-exchange/delta-exchange-mcp/issues. Attach the relevant debug log lines and redact api_key and api_secret first. Report incorrect data, auth or signing errors, crashes, missing tools, or rough edges.
+Report a normal bug at github.com/delta-exchange/delta-exchange-mcp/issues. Include the package version or source commit, MCP client, operating system, reproduction steps, and sanitized diagnostics. Remove credentials, connection URLs, and private account data. Send security reports privately to security@delta.exchange instead of publishing an unfixed exploit.
 
 ### 160. How do I test tools with MCP Inspector?
 
@@ -715,7 +717,7 @@ Run `uv run pytest`. The suite uses respx to mock httpx, so it needs no network.
 
 ### 162. How do I lint the code?
 
-Run `uv run ruff check src tests scripts`. Add `--fix` to autofix. Run lint and tests before you commit.
+Run `uv run ruff check src tests scripts packaging` in the checkout. For changes to the evaluation harness, also check `evals`. Run actionlint when workflows change. A successful lint result does not replace tests, bundle verification, or live permission checks.
 
 ### 163. How do I run a live smoke test?
 
@@ -723,12 +725,30 @@ Run `uv run python scripts/smoke.py`. It hits the real environment set in DELTA_
 
 ### 164. How does the server handle rate limits?
 
-On HTTP 429, GET requests back off using the X-RATE-LIMIT-RESET header in milliseconds. On 5xx, GET requests use exponential backoff. POST, PUT, and DELETE responses are not retried for either status. Transport errors are separate: the server retries them up to three total attempts for every HTTP method.
+GET requests retry rate limits, server failures, and transport failures up to three total attempts. Rate-limit waits use X-RATE-LIMIT-RESET in milliseconds; server failures use exponential backoff. POST, PUT, and DELETE do not retry automatically.
 
 ### 165. How does the server surface a Delta API error?
 
-When the API returns {success: false, error: {code, context}}, the server raises a DeltaApiError with the code, context, and HTTP status. For documented auth codes it adds a human hint, and for the IP-whitelist case it extracts the request IP from the context.
+The shared client validates Delta's error envelope and raises DeltaApiError with a bounded code and HTTP status. The model-visible message excludes the upstream context. Known errors have application-owned instructions, and an IP allowlist error can include a validated IP address. A malformed mutation rejection requires reconciliation because its execution outcome is unknown.
 
 ### 166. Why does a filter like empty expiry fail?
 
 Delta's API rejects an empty query param such as `?expiry=` as an invalid date. The client strips None-valued params before both signing and sending, so an unset filter is dropped rather than sent empty. This keeps the signed payload and the wire request identical.
+
+## Skills and local trust
+
+### 167. What does list_skills do?
+
+list_skills lists the packaged procedures for P&L, position risk, and funding carry. Each entry includes its name, description, resource URI, supporting files, and requires value. The requires value describes account access needed to run the procedure. It does not hide the procedure before account setup.
+
+### 168. What does get_skill do?
+
+get_skill reads a packaged procedure by name. Pass path to read one of its listed supporting files. Every procedure is readable without credentials. Account tool calls still require authorization. The path must be a key in the packaged file map; it cannot select an arbitrary file on the computer.
+
+### 169. Does the connection page prove that a person approved an action?
+
+No. The server trusts the local MCP client. A process with the Manage Connection URL can obtain the cookie and CSRF token and request connection or consent changes. The page does not independently verify user identity or presence. This is an accepted exception to the MCP URL elicitation requirements. The local client must enforce the user's instructions. Read docs/security.md for the controls and the trust boundary.
+
+### 170. What does DELTA_MCP_ANALYTICS do?
+
+DELTA_MCP_ANALYTICS controls the six X-Delta-MCP-* request headers. They report the server version, client name and version, tool, protocol, and bounded operating-system and capability details. They exclude client title, description, website, icons, credentials, and account identity. Set off, false, 0, or no in the MCP client's process environment to omit all six headers. This setting does not change the authentication headers or local consent identity. Upstream analytics retention is outside this package.
