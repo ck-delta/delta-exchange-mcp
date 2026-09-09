@@ -155,6 +155,11 @@ class _PreparedReplacement:
         self.backend.delete(
             _record_name(self.metadata.namespace, self.environment, revision)
         )
+
+    def clear_retired(self) -> None:
+        """Clear completed cleanup after the active revision is committed."""
+        if self.previous.active_revision is None:
+            return
         cleaned = replace_fields(
             self.current,
             pending_revisions=self.previous.pending_revisions,
@@ -181,8 +186,14 @@ class _PreparedReplacement:
         name = _record_name(self.metadata.namespace, self.environment, revision)
         restore_record(self.backend, name, self.previous_payload)
 
-    def rollback(self) -> None:
+    def rollback(self, *, restore_retired: bool = False) -> None:
         """Restore the previous active record and remove the new record."""
+        recovery_error: Exception | None = None
+        if restore_retired and self.previous.active_revision is not None:
+            try:
+                self.restore_previous_record()
+            except Exception as exc:
+                recovery_error = exc
         rollback = replace_fields(
             self.previous,
             next_revision=self.current.next_revision,
@@ -200,12 +211,13 @@ class _PreparedReplacement:
             # credential usable merely because its metadata could not be restored.
             logger.warning("credential rollback could not publish the previous pointer")
 
-        activation_error: Exception | None = None
         try:
             if self.activate is not None:
-                self.activate(self.previous_credential)
+                self.activate(
+                    self.previous_credential if recovery_error is None else None
+                )
         except Exception as exc:
-            activation_error = exc
+            recovery_error = exc
 
         try:
             self._discard_new()
@@ -213,8 +225,8 @@ class _PreparedReplacement:
             raise CredentialStoreError(
                 "credential rollback failed and cleanup remains pending"
             ) from cleanup_exc
-        if activation_error is not None:
-            raise activation_error
+        if recovery_error is not None:
+            raise recovery_error
 
     def _discard_new(self) -> None:
         self.backend.delete(self.new_name)
@@ -332,7 +344,7 @@ class CredentialStore:
         expected_generation: int | None = None,
         activate: Callable[[Credential | None], None] | None = None,
     ) -> Credential:
-        """Publish, activate, and retire one credential as a transaction."""
+        """Commit a replacement only after activation and retirement succeed."""
         env = normalize_environment(environment)
         key = api_key.strip()
         secret = api_secret.strip()
@@ -354,7 +366,9 @@ class CredentialStore:
                 activate=activate,
             )
             transaction.write_new()
-            transaction.publish()
+            # The reserved metadata still names the prior credential. Keep the
+            # candidate pending until every operation that can reject it succeeds.
+            # A restart can discard it even when rollback writes and deletes fail.
             try:
                 transaction.activate_new()
             except Exception as exc:
@@ -374,13 +388,7 @@ class CredentialStore:
                 transaction.retire_previous()
             except Exception as exc:
                 try:
-                    transaction.restore_previous_record()
-                except Exception as restore_exc:
-                    raise CredentialStoreError(
-                        "credential retirement failed and the old record could not be restored"
-                    ) from restore_exc
-                try:
-                    transaction.rollback()
+                    transaction.rollback(restore_retired=True)
                 except Exception as rollback_exc:
                     raise CredentialStoreError(
                         "credential retirement failed and its transaction rollback also failed"
@@ -389,6 +397,12 @@ class CredentialStore:
                     "could not retire credential revision "
                     f"{transaction.previous.active_revision}"
                 ) from exc
+            try:
+                transaction.publish()
+            except Exception:
+                transaction.rollback(restore_retired=True)
+                raise
+            transaction.clear_retired()
             return transaction.new_credential
 
     def delete(

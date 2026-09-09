@@ -119,6 +119,7 @@ def migrate(store: "CredentialStore", config_path: Path) -> MigrationResult:
 
                 try:
                     transaction.retire_previous()
+                    transaction.clear_retired()
                 except Exception as exc:
                     logger.warning(
                         "could not retire inactive credential revision %s for %s "
