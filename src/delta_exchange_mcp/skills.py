@@ -11,28 +11,24 @@ Every skill is published three ways, because clients differ in what they read:
 * through the `list_skills` / `get_skill` tools, for clients that only call tools;
 * as a prompt per skill, which surfaces as a slash command in Claude Code.
 
-All three surfaces live in this one module on purpose. The `mcp` 2.x migration
-moves the resource and prompt decorators, and one file is cheaper to fix than
-four.
+All three interfaces use the same catalog. Credentials control account tool calls,
+so every written procedure remains available before and after account setup.
 """
-
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import resources
+from importlib.resources.abc import Traversable
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.resources import FunctionResource
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.resources import FunctionResource
 from pydantic import AnyUrl
 
-from delta_exchange_mcp import config as config_mod
+from delta_exchange_mcp import hints
 
 DATA_DIR = "skills_data"
 URI_PREFIX = "skill://delta/"
 
-# Skills that read the user's account are hidden without credentials, mirroring
-# how `account.register` is gated. A skill nobody can run is worse than absent:
-# the model will try it and blame the failure on the exchange.
+# Requirements describe the tools a procedure calls; they do not hide its text.
 PUBLIC = "public"
 CREDENTIALS = "credentials"
 
@@ -59,52 +55,20 @@ class Skill:
 
 
 class Catalog:
-    """The skill definitions and their live credential entitlement."""
+    """The packaged procedures and their supporting files."""
 
-    def __init__(self, shipped: list[Skill], has_credentials: bool) -> None:
+    def __init__(self, shipped: list[Skill]) -> None:
         self._shipped = tuple(shipped)
         self._by_name = {skill.name: skill for skill in shipped}
-        self._by_prompt = {skill.prompt_name: skill for skill in shipped}
-        self._has_credentials = has_credentials
-
-    def set_credentials(self, present: bool) -> bool:
-        """Update the entitlement and report whether the visible catalog changed."""
-        changed = present != self._has_credentials
-        self._has_credentials = present
-        return changed
-
-    def available(self) -> list[Skill]:
-        """Skills allowed by the current credential entitlement."""
-        return [
-            skill
-            for skill in self._shipped
-            if skill.requires != CREDENTIALS or self._has_credentials
-        ]
 
     @property
     def shipped(self) -> tuple[Skill, ...]:
-        """Every packaged skill, independent of the live entitlement."""
+        """Every packaged skill in discovery order."""
         return self._shipped
 
     def get(self, name: str) -> Skill | None:
-        skill = self._by_name.get(name)
-        if skill is None or (
-            skill.requires == CREDENTIALS and not self._has_credentials
-        ):
-            return None
-        return skill
-
-    def allows_uri(self, uri: str) -> bool:
-        """Whether a skill resource URI is visible in the current entitlement."""
-        if not uri.startswith(URI_PREFIX):
-            return True
-        name = uri.removeprefix(URI_PREFIX).split("/", 1)[0]
-        return self.get(name) is not None
-
-    def allows_prompt(self, name: str) -> bool:
-        """Whether a registered prompt is visible in the current entitlement."""
-        skill = self._by_prompt.get(name)
-        return skill is None or self.get(skill.name) is not None
+        """Find a packaged procedure by its exact name."""
+        return self._by_name.get(name)
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -129,7 +93,7 @@ def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return meta, body
 
 
-def _read_files(skill_dir) -> dict[str, str]:
+def _read_files(skill_dir: Traversable) -> dict[str, str]:
     """Read `references/` and `assets/` one level deep, in stable order."""
     out: dict[str, str] = {}
     for sub in sorted(skill_dir.iterdir(), key=lambda p: p.name):
@@ -166,11 +130,6 @@ def discover() -> list[Skill]:
     return skills
 
 
-def available(cfg: config_mod.Config) -> list[Skill]:
-    """Skills the current configuration can actually run."""
-    return [s for s in discover() if s.requires != CREDENTIALS or cfg.has_credentials]
-
-
 def _mime_for(path: str) -> str:
     """Markdown by default: a skill's own URI carries no file extension."""
     dot = path.rfind(".")
@@ -178,7 +137,7 @@ def _mime_for(path: str) -> str:
 
 
 def _add_resource(
-    mcp: FastMCP, uri: str, name: str, description: str, text: str
+    mcp: MCPServer, uri: str, name: str, description: str, text: str
 ) -> None:
     mcp.add_resource(
         FunctionResource(
@@ -193,9 +152,9 @@ def _add_resource(
     )
 
 
-def register(mcp: FastMCP, cfg: config_mod.Config) -> Catalog:
-    """Publish the available skills as resources, tools, and prompts."""
-    catalog = Catalog(discover(), cfg.has_credentials)
+def register(mcp: MCPServer) -> Catalog:
+    """Publish every packaged skill as resources, tools, and prompts."""
+    catalog = Catalog(discover())
 
     for skill in catalog.shipped:
         _add_resource(mcp, skill.uri, skill.name, skill.description, skill.body)
@@ -208,7 +167,7 @@ def register(mcp: FastMCP, cfg: config_mod.Config) -> Catalog:
                 text,
             )
 
-    @mcp.tool()
+    @mcp.tool(annotations=hints.reads("List Delta procedures", external=False))
     def list_skills() -> dict[str, object]:
         """The procedures this server knows how to run, and when to use each.
 
@@ -222,15 +181,16 @@ def register(mcp: FastMCP, cfg: config_mod.Config) -> Catalog:
                 {
                     "name": s.name,
                     "description": s.description,
+                    "requires": s.requires,
                     "uri": s.uri,
                     "files": sorted(s.files),
                 }
-                for s in catalog.available()
+                for s in catalog.shipped
             ],
             "hint": "Call get_skill(name) for the full procedure.",
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=hints.reads("Read a Delta procedure", external=False))
     def get_skill(name: str, path: str | None = None) -> str:
         """The full text of a skill, or of one of its supporting files.
 
@@ -242,7 +202,7 @@ def register(mcp: FastMCP, cfg: config_mod.Config) -> Catalog:
         if skill is None:
             raise ValueError(
                 f"unknown skill {name!r}; available: "
-                f"{sorted(s.name for s in catalog.available()) or 'none'}"
+                f"{sorted(s.name for s in catalog.shipped) or 'none'}"
             )
         if path is None:
             return skill.body
@@ -257,7 +217,7 @@ def register(mcp: FastMCP, cfg: config_mod.Config) -> Catalog:
     return catalog
 
 
-def _register_prompt(mcp: FastMCP, skill: Skill) -> None:
+def _register_prompt(mcp: MCPServer, skill: Skill) -> None:
     """One slash command per skill. The prompt is a doorway, not a copy.
 
     Duplicating the skill text here would double the maintenance and put a long

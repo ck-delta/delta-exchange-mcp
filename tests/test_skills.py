@@ -1,11 +1,12 @@
 """Skills load from package data and publish on all three surfaces."""
 
-import asyncio
 import ast
 import re
 
 import pytest
 from jsonschema import validate
+from mcp.client import Client
+from mcp.types import TextContent
 
 from delta_exchange_mcp import config as config_mod
 from delta_exchange_mcp import skills
@@ -102,7 +103,22 @@ def test_position_risk_uses_delta_for_option_direction() -> None:
     assert "report directional net as `n/a`" in skill.body
 
 
-async def test_funding_procedure_call_satisfies_the_tool_schema():
+@pytest.fixture
+async def app():
+    server = build_server(PUBLIC_CFG)
+    try:
+        yield server
+    finally:
+        await server.close_live_client()
+
+
+@pytest.fixture
+async def client(app):
+    async with Client(app, mode="auto") as session:
+        yield session
+
+
+async def test_funding_procedure_call_satisfies_the_tool_schema(client):
     skill = next(item for item in skills.discover() if item.name == "funding-carry")
     example = re.search(r"`(get_funding_history\([^`]+\))`", skill.body)
     assert example is not None
@@ -117,132 +133,106 @@ async def test_funding_procedure_call_satisfies_the_tool_schema():
         else ast.literal_eval(keyword.value)
         for keyword in call.keywords
     }
-    app = _server(PUBLIC_CFG)
-    tools = {tool.name: tool for tool in await app.list_tools()}
-    validate(arguments, tools["get_funding_history"].inputSchema)
-
-
-def test_credential_skills_are_hidden_without_keys():
-    gated = {s.name for s in skills.discover() if s.requires == skills.CREDENTIALS}
-    public_names = {s.name for s in skills.available(PUBLIC_CFG)}
-    auth_names = {s.name for s in skills.available(AUTH_CFG)}
-
-    assert gated.isdisjoint(public_names)
-    assert gated.issubset(auth_names)
-    assert public_names.issubset(auth_names)
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    validate(arguments, tools["get_funding_history"].input_schema)
 
 
 def test_at_least_one_skill_needs_no_credentials():
-    """A public-data-only install must still get something."""
-    assert skills.available(PUBLIC_CFG)
+    assert any(skill.requires == skills.PUBLIC for skill in skills.discover())
 
 
-# --- server wiring -------------------------------------------------------
+async def test_instructions_are_sent_to_the_client(app):
+    assert "list_skills" in app.instructions
 
 
-def _server(cfg):
-    return build_server(cfg)
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_every_skill_and_supporting_file_is_readable_without_keys(app, mode):
+    async with Client(app, mode=mode) as client:
+        listed = {
+            str(resource.uri): resource
+            for resource in (await client.list_resources()).resources
+        }
+        for skill in skills.discover():
+            expected_files = {"": skill.body, **skill.files}
+            for path, text in expected_files.items():
+                uri = f"{skill.uri}/{path}" if path else skill.uri
+                expected_mime = "text/html" if path.endswith(".html") else "text/markdown"
+                assert listed[uri].mime_type == expected_mime
+                result = await client.read_resource(uri)
+                assert result.contents[0].text == text
 
 
-def test_instructions_are_sent_to_the_client():
-    mcp = _server(PUBLIC_CFG)
-    assert mcp.instructions
-    assert "list_skills" in mcp.instructions
-
-
-def test_every_available_skill_has_a_resource():
-    mcp = _server(AUTH_CFG)
-    uris = {str(r.uri) for r in asyncio.run(mcp.list_resources())}
-    for skill in skills.available(AUTH_CFG):
-        assert skill.uri in uris
-        for rel in skill.files:
-            assert f"{skill.uri}/{rel}" in uris
-
-
-def test_gated_skill_resources_are_absent_without_keys():
-    uris = {str(r.uri) for r in asyncio.run(_server(PUBLIC_CFG).list_resources())}
+async def test_each_skill_has_a_usable_prompt_without_keys(client):
+    names = {prompt.name for prompt in (await client.list_prompts()).prompts}
+    assert names == {skill.prompt_name for skill in skills.discover()}
+    assert all("-" not in name for name in names)
     for skill in skills.discover():
-        if skill.requires == skills.CREDENTIALS:
-            assert skill.uri not in uris
+        result = await client.get_prompt(skill.prompt_name)
+        assert skill.name in result.messages[0].content.text
+        assert "get_skill" in result.messages[0].content.text
 
 
-def test_each_skill_gets_a_prompt():
-    mcp = _server(AUTH_CFG)
-    names = {p.name for p in asyncio.run(mcp.list_prompts())}
-    assert names == {s.prompt_name for s in skills.available(AUTH_CFG)}
-    assert all("-" not in n for n in names), "prompt names must be slash-command safe"
+async def test_skill_tools_are_read_only_and_local(client):
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    for name in ("list_skills", "get_skill"):
+        assert tools[name].annotations.read_only_hint is True
+        assert tools[name].annotations.open_world_hint is False
 
 
-def test_resources_declare_useful_mime_types():
-    """A skill URI has no extension; it must still announce itself as markdown."""
-    # list_resources returns protocol objects, whose field is mimeType.
-    by_uri = {
-        str(r.uri): r.mimeType for r in asyncio.run(_server(AUTH_CFG).list_resources())
-    }
-    for skill in skills.available(AUTH_CFG):
-        assert by_uri[skill.uri] == "text/markdown"
-        for rel in skill.files:
-            expected = "text/html" if rel.endswith(".html") else "text/markdown"
-            assert by_uri[skill.uri + "/" + rel] == expected
+async def test_get_skill_returns_every_procedure_without_keys(client):
+    for skill in skills.discover():
+        result = await client.call_tool("get_skill", {"name": skill.name})
+        assert not result.is_error
+        assert result.content == [TextContent(type="text", text=skill.body)]
 
 
-def test_skill_tools_are_registered():
-    names = {t.name for t in asyncio.run(_server(PUBLIC_CFG).list_tools())}
-    assert {"list_skills", "get_skill"}.issubset(names)
+async def test_get_skill_rejects_unknown_name(client):
+    result = await client.call_tool("get_skill", {"name": "no-such-skill"})
+    assert result.is_error
+    assert "unknown skill" in result.content[0].text
 
 
-# --- get_skill -----------------------------------------------------------
+@pytest.mark.parametrize(
+    "path", ["../../config.py", "/etc/passwd", "references/../../server.py"]
+)
+async def test_get_skill_rejects_traversal_path(client, path):
+    first = skills.discover()[0]
+    result = await client.call_tool("get_skill", {"name": first.name, "path": path})
+    assert result.is_error
+    assert "has no file" in result.content[0].text
 
 
-def _get_skill_fn(cfg):
-    """Pull the registered closure back out so error paths are testable."""
-    mcp = _server(cfg)
-    return mcp._tool_manager.get_tool("get_skill").fn
-
-
-def test_get_skill_returns_the_body():
-    fn = _get_skill_fn(PUBLIC_CFG)
-    first = skills.available(PUBLIC_CFG)[0]
-    assert fn(name=first.name) == first.body
-
-
-def test_get_skill_rejects_unknown_name():
-    fn = _get_skill_fn(PUBLIC_CFG)
-    with pytest.raises(ValueError, match="unknown skill"):
-        fn(name="no-such-skill")
-
-
-def test_get_skill_rejects_traversal_path():
-    """`path` is a key into a dict built at discovery, so traversal cannot resolve."""
-    fn = _get_skill_fn(PUBLIC_CFG)
-    first = skills.available(PUBLIC_CFG)[0]
-    for attempt in ("../../config.py", "/etc/passwd", "references/../../server.py"):
-        with pytest.raises(ValueError, match="has no file"):
-            fn(name=first.name, path=attempt)
-
-
-def test_get_skill_rejects_gated_skill_without_keys():
-    """A hidden skill is not reachable by guessing its name."""
-    gated = [s for s in skills.discover() if s.requires == skills.CREDENTIALS]
-    if not gated:
-        pytest.skip("no credential-gated skills shipped")
-    fn = _get_skill_fn(PUBLIC_CFG)
-    with pytest.raises(ValueError, match="unknown skill"):
-        fn(name=gated[0].name)
-
-
-def test_list_skills_matches_what_is_available():
-    mcp = _server(AUTH_CFG)
-    listed = mcp._tool_manager.get_tool("list_skills").fn()
-    assert {s["name"] for s in listed["skills"]} == {
-        s.name for s in skills.available(AUTH_CFG)
-    }
-    for entry in listed["skills"]:
+async def test_list_skills_includes_the_requirement_for_each_procedure(client):
+    result = await client.call_tool("list_skills", {})
+    listed = result.structured_content["skills"]
+    assert {item["name"] for item in listed} == {item.name for item in skills.discover()}
+    for entry in listed:
         assert entry["uri"].startswith(skills.URI_PREFIX)
+        expected = next(skill for skill in skills.discover() if skill.name == entry["name"])
+        assert entry["requires"] == expected.requires
 
 
-def test_supporting_files_are_reachable():
-    fn = _get_skill_fn(AUTH_CFG)
-    for skill in skills.available(AUTH_CFG):
-        for rel, text in skill.files.items():
-            assert fn(name=skill.name, path=rel) == text
+async def test_supporting_files_are_reachable_by_tool(client):
+    for skill in skills.discover():
+        for path, text in skill.files.items():
+            result = await client.call_tool("get_skill", {"name": skill.name, "path": path})
+            assert not result.is_error
+            assert result.content == [TextContent(type="text", text=text)]
+
+
+async def test_account_setup_does_not_change_the_skill_catalog(app, client):
+    async def catalog() -> tuple[set[str], set[str], dict[str, object]]:
+        resources = await client.list_resources(cache_mode="refresh")
+        prompts = await client.list_prompts(cache_mode="refresh")
+        listed = await client.call_tool("list_skills", {})
+        return (
+            {str(resource.uri) for resource in resources.resources},
+            {prompt.name for prompt in prompts.prompts},
+            listed.structured_content,
+        )
+
+    before = await catalog()
+    app.live_client.rebind(AUTH_CFG)
+    assert await catalog() == before
+    app.live_client.rebind(PUBLIC_CFG)
+    assert await catalog() == before
