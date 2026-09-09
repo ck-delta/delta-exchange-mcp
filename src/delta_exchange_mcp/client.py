@@ -381,12 +381,7 @@ class DeltaClient:
             except ValueError:
                 data = None
             if isinstance(data, dict) and data.get("success") is False:
-                err = data.get("error") or {}
-                raise DeltaApiError(
-                    code=err.get("code", "unknown"),
-                    context=err.get("context"),
-                    status=resp.status_code,
-                )
+                raise DeltaClient._response_error(data, resp.status_code)
         if resp.status_code >= 400:
             raise DeltaApiError("http_error", context=resp.text[:500], status=resp.status_code)
         return resp.content
@@ -399,12 +394,7 @@ class DeltaClient:
             raise DeltaApiError("invalid_response", context=resp.text[:500], status=resp.status_code)
 
         if isinstance(data, dict) and data.get("success") is False:
-            err = data.get("error") or {}
-            raise DeltaApiError(
-                code=err.get("code", "unknown"),
-                context=err.get("context"),
-                status=resp.status_code,
-            )
+            raise DeltaClient._response_error(data, resp.status_code)
         if resp.status_code >= 400:
             raise DeltaApiError("http_error", context=data, status=resp.status_code)
         if isinstance(data, dict) and "result" in data:
@@ -430,18 +420,7 @@ class DeltaClient:
                 status=resp.status_code,
             )
         if data["success"] is False:
-            error = data.get("error") or {}
-            if not isinstance(error, dict):
-                raise DeltaApiError(
-                    "invalid_response",
-                    context="the mutation rejection was malformed",
-                    status=resp.status_code,
-                )
-            raise DeltaApiError(
-                code=error.get("code", "unknown"),
-                context=error.get("context"),
-                status=resp.status_code,
-            )
+            raise DeltaClient._response_error(data, resp.status_code)
         if resp.status_code >= 400:
             raise DeltaApiError(
                 "http_error",
@@ -451,3 +430,14 @@ class DeltaClient:
         if "result" in data:
             return {"result": data["result"], "meta": data.get("meta")}
         return data
+
+    @staticmethod
+    def _response_error(data: dict[str, Any], status: int) -> DeltaApiError:
+        """Build an API error only from a valid string code."""
+        error = data.get("error")
+        if not isinstance(error, dict):
+            return DeltaApiError("invalid_response", status=status)
+        code = error.get("code")
+        if not isinstance(code, str) or not code:
+            return DeltaApiError("invalid_response", status=status)
+        return DeltaApiError(code, context=error.get("context"), status=status)

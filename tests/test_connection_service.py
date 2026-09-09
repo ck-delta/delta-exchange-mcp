@@ -395,7 +395,7 @@ def test_a_shared_environment_round_trip_invalidates_existing_approval() -> None
     assert connection.status(context("Codex"))["trading"]["enabled"] is False
 
 
-def test_rollback_recovery_requires_new_trading_consent(monkeypatch) -> None:
+def test_failed_replacement_preserves_prior_consent_but_never_transfers_it(monkeypatch) -> None:
     connection = service(verified)
     connection.credentials.replace("india_prod", "old-key", "old-secret")
     action(
@@ -417,6 +417,7 @@ def test_rollback_recovery_requires_new_trading_consent(monkeypatch) -> None:
 
     def fail_activation(credential):
         nonlocal blocked
+        connection._activate_credential(credential)
         if credential and credential.revision == 2:
             blocked = True
             raise RuntimeError("activation failed")
@@ -426,11 +427,12 @@ def test_rollback_recovery_requires_new_trading_consent(monkeypatch) -> None:
         connection.credentials.replace(
             "india_prod", "candidate-key", "candidate-secret", activate=fail_activation
         )
-    assert not approved.final_trading_check()
+    assert approved.final_trading_check()
+    assert connection.client.binding_config.api_key == "old-key"
     blocked = False
     recovered = asyncio.run(connection.access_state(context("Codex")))
-    assert not recovered.credentials_ready
-    assert not recovered.trading_enabled
+    assert recovered.credentials_ready
+    assert recovered.trading_enabled
     connection.credentials.replace(
         "india_prod", "reconnected-key", "reconnected-secret"
     )
