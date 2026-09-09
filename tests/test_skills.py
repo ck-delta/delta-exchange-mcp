@@ -1,8 +1,11 @@
 """Skills load from package data and publish on all three surfaces."""
 
 import asyncio
+import ast
+import re
 
 import pytest
+from jsonschema import validate
 
 from delta_exchange_mcp import config as config_mod
 from delta_exchange_mcp import skills
@@ -97,6 +100,26 @@ def test_position_risk_uses_delta_for_option_direction() -> None:
     skill = next(s for s in skills.discover() if s.name == "position-risk")
     assert "index_price * delta" in skill.body
     assert "report directional net as `n/a`" in skill.body
+
+
+async def test_funding_procedure_call_satisfies_the_tool_schema():
+    skill = next(item for item in skills.discover() if item.name == "funding-carry")
+    example = re.search(r"`(get_funding_history\([^`]+\))`", skill.body)
+    assert example is not None
+    call = ast.parse(example.group(1), mode="eval").body
+    assert isinstance(call, ast.Call)
+    assert not call.args
+    end = 1_789_000_000
+    values = {"symbol": "BTCUSD", "start": end - 604800, "end": end}
+    arguments = {
+        keyword.arg: values[keyword.value.id]
+        if isinstance(keyword.value, ast.Name)
+        else ast.literal_eval(keyword.value)
+        for keyword in call.keywords
+    }
+    app = _server(PUBLIC_CFG)
+    tools = {tool.name: tool for tool in await app.list_tools()}
+    validate(arguments, tools["get_funding_history"].inputSchema)
 
 
 def test_credential_skills_are_hidden_without_keys():

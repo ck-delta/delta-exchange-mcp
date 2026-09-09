@@ -50,8 +50,10 @@ annualised_pct = funding_rate * 3 * 365      # 3 settlements a day
 3. Drop anything below a liquidity floor. Default to `oi_value_usd >= 250000`.
    Say in the output what floor you used and how many symbols it removed.
 4. Compute `annualised_pct` for the rest and sort by absolute value, descending.
-5. For the top 5 to 10 only, call `get_funding_history(symbol, resolution="1h")`
-   over the last 7 days and compute:
+5. Set `end` to the current Unix timestamp in seconds. Set `start = end - 604800`
+   for the last 7 days. For the top 5 to 10 only, call
+   `get_funding_history(symbol=symbol, resolution="1h", start=start, end=end)`
+   and compute:
    - the mean realised rate over the window,
    - the share of hours whose sign matches the current rate.
    A rate that has held its sign for under about 70% of the week is a snapshot,
