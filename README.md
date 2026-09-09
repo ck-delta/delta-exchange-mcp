@@ -407,6 +407,12 @@ Connection for account access.
 
 ## Safety
 
+The server trusts the local MCP client. A process that has the Manage Connection URL
+can obtain its page cookie and CSRF token and request connection or consent changes.
+The page does not independently verify user identity or presence. This is an accepted
+exception to the MCP URL elicitation security requirements. Read the
+[local security model](docs/security.md) before you connect a client.
+
 - **Request-time authorization.** All tools stay visible, but account calls require a current credential and real mutations require browser consent for the exact client, environment, and credential identity.
 - **Credential isolation.** Manage Connection sends secrets only to the local loopback service. The model never receives them.
 - **Fail-closed changes.** Credential rotation, disconnect, environment changes, consent-store failures, and process-pair changes disable trading until fresh consent is recorded.
