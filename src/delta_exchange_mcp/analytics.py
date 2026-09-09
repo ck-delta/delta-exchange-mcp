@@ -1,6 +1,7 @@
 """Bounded analytics headers for outbound Delta API requests."""
 
 import json
+import os
 import platform
 import sys
 from collections.abc import Iterator
@@ -12,9 +13,7 @@ from urllib.parse import quote
 from mcp.server.mcpserver import Context
 from mcp_types import (
     CLIENT_CAPABILITIES_META_KEY,
-    CLIENT_INFO_META_KEY,
     ClientCapabilities,
-    Implementation,
 )
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
@@ -31,18 +30,15 @@ _CLOSED_CAPABILITIES = ("sampling", "elicitation", "roots", "tasks")
 _OPEN_CAPABILITIES = ("experimental", "extensions")
 _PLATFORM = f"{platform.system()} {platform.machine()}"
 _PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}"
+_OFF = frozenset({"off", "false", "0", "no"})
 
 
 @dataclass(frozen=True)
 class _Call:
-    """The non-sensitive analytics fields copied from one MCP tool request."""
+    """The bounded analytics fields copied from one MCP tool request."""
 
     client_name: str = ""
     client_version: str = ""
-    title: str = ""
-    description: str = ""
-    website_url: str = ""
-    icon_count: int = 0
     capabilities: tuple[tuple[str, bool | int], ...] = ()
     tool: str = ""
     protocol: str = ""
@@ -94,54 +90,40 @@ def _capabilities(capabilities: ClientCapabilities | None) -> dict[str, bool | i
     return result
 
 
-def _modern_models(
-    ctx: Context,
-) -> tuple[Implementation | None, ClientCapabilities | None]:
+def _modern_capabilities(ctx: Context) -> ClientCapabilities | None:
     try:
         meta = ctx.request_context.meta
     except ValueError:
-        return None, None
+        return None
     if meta is None:
-        return None, None
+        return None
 
-    raw_info = meta.get(CLIENT_INFO_META_KEY)
     raw_capabilities = meta.get(CLIENT_CAPABILITIES_META_KEY)
     try:
-        info = Implementation.model_validate(raw_info)
+        return ClientCapabilities.model_validate(raw_capabilities)
     except (TypeError, ValueError):
-        info = None
-    try:
-        capabilities = ClientCapabilities.model_validate(raw_capabilities)
-    except (TypeError, ValueError):
-        capabilities = None
-    return info, capabilities
+        return None
 
 
-def _legacy_models(
-    ctx: Context,
-) -> tuple[Implementation | None, ClientCapabilities | None]:
+def _legacy_capabilities(ctx: Context) -> ClientCapabilities | None:
     try:
         params = ctx.session.client_params
     except ValueError:
-        return None, None
+        return None
     if params is None:
-        return None, None
-    return params.client_info, params.capabilities
+        return None
+    return params.capabilities
 
 
 def _snapshot(ctx: Context, tool: str) -> _Call:
     reported = request.context_client(ctx)
     if ctx.protocol_version in MODERN_PROTOCOL_VERSIONS:
-        info, capabilities = _modern_models(ctx)
+        capabilities = _modern_capabilities(ctx)
     else:
-        info, capabilities = _legacy_models(ctx)
+        capabilities = _legacy_capabilities(ctx)
     return _Call(
         client_name=reported.name,
         client_version=reported.version,
-        title=reported.title[:FIELD_LIMIT],
-        description=(info.description or "")[:FIELD_LIMIT] if info is not None else "",
-        website_url=(info.website_url or "")[:FIELD_LIMIT] if info is not None else "",
-        icon_count=len(info.icons or ()) if info is not None else 0,
         capabilities=tuple(_capabilities(capabilities).items()),
         tool=tool,
         protocol=ctx.protocol_version or "",
@@ -160,6 +142,8 @@ def scope(ctx: Context, tool: str) -> Iterator[None]:
 
 def headers() -> dict[str, str]:
     """Build the analytics headers for the current outbound request."""
+    if os.environ.get("DELTA_MCP_ANALYTICS", "on").strip().lower() in _OFF:
+        return {}
     call = _current.get()
     result = {f"{PREFIX}Version": PACKAGE_VERSION}
     if call is None:
@@ -177,16 +161,11 @@ def headers() -> dict[str, str]:
         "platform": _PLATFORM,
         "python": _PYTHON,
     }
-    for name in ("title", "description", "website_url"):
-        if value := getattr(call, name):
-            extra[name] = value
-    if call.icon_count:
-        extra["icons"] = call.icon_count
     if call.capabilities:
         extra["capabilities"] = dict(call.capabilities)
 
     spent = sum(len(name) + len(value) + 4 for name, value in result.items())
-    droppable = ["description", "title", "website_url", "capabilities", "icons"]
+    droppable = ["capabilities"]
     while extra:
         value = as_header(extra)
         if value and spent + len(CONTEXT_HEADER) + len(value) + 4 <= BUDGET_BYTES:

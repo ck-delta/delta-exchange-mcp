@@ -9,6 +9,7 @@ from delta_exchange_mcp.auth.backend import (
     BackendOperationError,
     CredentialState,
     FileMetadata,
+    MetadataError,
 )
 from delta_exchange_mcp.auth.migration import MigrationError, MigrationStatus
 from delta_exchange_mcp.auth.store import (
@@ -139,6 +140,29 @@ def test_migration_publish_failure_rolls_back_the_new_record(tmp_path, monkeypat
     assert backend.values == {}
 
 
+def test_metadata_commit_failure_keeps_the_legacy_credential_file(
+    tmp_path, monkeypatch
+):
+    credentials, backend = make_store(tmp_path)
+    config_path = tmp_path / "config.env"
+    original = "DELTA_API_KEY=key\nDELTA_API_SECRET=secret\n"
+    config_path.write_text(original)
+    write = credentials._metadata.write
+
+    def fail_commit(values):
+        current = values.get("india_prod")
+        if current is not None and current.active_revision is not None:
+            raise MetadataError("commit failed")
+        write(values)
+
+    monkeypatch.setattr(credentials._metadata, "write", fail_commit)
+    with pytest.raises(MetadataError, match="commit failed"):
+        credentials.migrate(config_path)
+    assert config_path.read_text() == original
+    assert credentials.get("india_prod") is None
+    assert backend.values == {}
+
+
 def test_migration_publish_failure_restores_the_prior_active_record(
     tmp_path,
     monkeypatch,
@@ -165,6 +189,61 @@ def test_migration_publish_failure_restores_the_prior_active_record(
     assert config_path.read_text() == original
     assert credentials.get("india_prod") == first
     assert set(backend.values) == {record_name(credentials, 1)}
+
+
+@pytest.mark.parametrize("reconnect", ["replace", "migrate"])
+def test_first_migration_recovers_after_rollback_metadata_becomes_writable(
+    tmp_path, monkeypatch, reconnect
+):
+    credentials, backend = make_store(tmp_path)
+    config_path = tmp_path / "config.env"
+    original = "DELTA_API_KEY=key\nDELTA_API_SECRET=secret\nDELTA_MCP_MODE=trade\n"
+    config_path.write_text(original)
+    real_replace = os.replace
+    blocked = False
+
+    def fail_publication(source, target):
+        nonlocal blocked
+        if target == config_path:
+            blocked = True
+            raise OSError("read-only config")
+        if blocked:
+            raise OSError("read-only metadata")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(auth_migration.os, "replace", fail_publication)
+    with pytest.raises(MigrationError, match="rollback also failed"):
+        credentials.migrate(config_path)
+
+    assert config_path.read_text() == original
+    assert backend.values == {}
+    assert credentials.metadata("india_prod").pending_revisions == ()
+    with pytest.raises(MetadataError):
+        credentials.get("india_prod")
+
+    monkeypatch.setattr(auth_migration.os, "replace", real_replace)
+    restarted = CredentialStore(
+        backend, FileMetadata(tmp_path / "credentials.json"), CredentialSource.OS_STORE
+    )
+    assert restarted.get("india_prod") is None
+    recovered = restarted.metadata("india_prod")
+    assert recovered.reconnect_required
+    assert recovered.generation == 2
+    with pytest.raises(CredentialConflictError, match="generation"):
+        restarted.replace("india_prod", "key", "secret", expected_generation=1)
+    if reconnect == "replace":
+        saved = restarted.replace(
+            "india_prod", "key", "secret", expected_generation=recovered.generation
+        )
+    else:
+        result = restarted.migrate(config_path)
+        assert result.status is MigrationStatus.MIGRATED
+        saved = result.credential
+        assert config_path.read_text() == "DELTA_MCP_MODE=trade\n"
+    assert saved is not None
+    assert (saved.revision, saved.generation) == (2, 3)
+    assert restarted.get("india_prod") == saved
+    assert not restarted.metadata("india_prod").reconnect_required
 
 
 def test_config_directory_sync_failure_does_not_rollback_published_migration(

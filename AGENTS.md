@@ -97,9 +97,11 @@ keep credentials and consent in process memory. Never add a plaintext fallback.
 
 The non-secret metadata file holds active revisions, validation state, account labels,
 timestamps, pending cleanup, and revocation generations. Writes are atomic and serialized.
-A replacement validates the candidate, writes a new version, reads it back, publishes the
-active pointer, rebinds the client, and then retires the old version. A crash or a missing
-keyring record must leave recoverable metadata.
+A replacement validates the candidate, writes a pending version, and reads it back.
+It rebinds the client and retires the old version before it publishes the active pointer.
+Publication is the commit point. Recovery must never activate a pending candidate. A
+missing old record requires reconnect. Legacy-file migration commits a verified native
+copy before removing the plaintext source, so a failed metadata commit leaves the source.
 
 OS record names are scoped to the canonical metadata path. Metadata copied to a different
 path and records from the old draft format require a browser reconnect. Keep their record

@@ -28,6 +28,7 @@ def testnet_everywhere(monkeypatch):
     monkeypatch.delenv("DELTA_API_KEY", raising=False)
     monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     monkeypatch.delenv("DELTA_MCP_MODE", raising=False)
+    monkeypatch.delenv("DELTA_MCP_ANALYTICS", raising=False)
 
 
 async def call_ticker(client_info: types.Implementation) -> httpx.Headers:
@@ -65,7 +66,7 @@ async def test_request_identifies_the_exact_client_and_tool() -> None:
     assert sent[f"{analytics.PREFIX}Tool"] == "get_ticker"
     assert sent[f"{analytics.PREFIX}Version"] == PACKAGE_VERSION
     assert sent[f"{analytics.PREFIX}Protocol"] == "2026-07-28"
-    assert json.loads(sent[analytics.CONTEXT_HEADER])["title"] == "Claude"
+    assert "title" not in json.loads(sent[analytics.CONTEXT_HEADER])
     assert f"{analytics.PREFIX}Env" not in sent
     assert f"{analytics.PREFIX}Mode" not in sent
     assert f"{analytics.PREFIX}Session" not in sent
@@ -245,7 +246,8 @@ async def test_context_header_is_directly_parseable_json() -> None:
     raw = sent[analytics.CONTEXT_HEADER]
     assert "%5C" not in raw
     assert raw.isascii() and raw.isprintable()
-    assert json.loads(raw)["title"].startswith('he said "hi"')
+    assert set(json.loads(raw)) <= {"platform", "python", "capabilities"}
+    assert "he said" not in raw
 
 
 def test_context_header_rejects_unprintable_output(monkeypatch) -> None:
@@ -323,3 +325,34 @@ async def test_readme_discloses_every_analytics_header() -> None:
 
     missing = sorted(name for name in forwarded if name.lower() not in documented_lower)
     assert not missing, f"forwarded but undocumented: {missing}"
+
+
+@respx.mock
+async def test_client_free_text_is_not_forwarded() -> None:
+    marker = "private-client-metadata"
+    sent = await call_ticker(
+        types.Implementation(
+            name="client",
+            version="1",
+            title=marker,
+            description=marker,
+            website_url=f"https://example.test/{marker}",
+            icons=[types.Icon(src=f"https://example.test/{marker}.png")],
+        )
+    )
+    assert marker not in " ".join(sent.values())
+    assert set(json.loads(sent[analytics.CONTEXT_HEADER])) <= {
+        "platform",
+        "python",
+        "capabilities",
+    }
+
+
+@pytest.mark.parametrize("value", ["off", "false", "0", "no", " OFF "])
+@respx.mock
+async def test_opt_out_removes_analytics_without_blocking_requests(monkeypatch, value):
+    monkeypatch.setenv("DELTA_MCP_ANALYTICS", value)
+    sent = await call_ticker(types.Implementation(name="client", version="1"))
+    assert not any(name.lower().startswith(analytics.PREFIX.lower()) for name in sent)
+    assert analytics.headers() == {}
+    assert "user-agent" in sent

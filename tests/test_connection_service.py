@@ -24,6 +24,7 @@ from delta_exchange_mcp.auth.store import (
     CredentialSource,
     CredentialState,
     CredentialStore,
+    CredentialStoreError,
     MetadataError,
     MemoryMetadata,
     MemorySecretBackend,
@@ -32,6 +33,7 @@ from delta_exchange_mcp.server import build_server
 from delta_exchange_mcp.tools import trading
 from tests.connection_support import (
     action,
+    assert_place_order_blocked,
     context,
     service,
     stores,
@@ -166,9 +168,7 @@ def test_rotation_disconnect_and_environment_round_trip_revoke_consent() -> None
 
 
 def test_browser_can_return_from_shared_devnet_to_managed_environment() -> None:
-    store.path().write_text(
-        "DELTA_MCP_ENV=india_devnet\nDELTA_MCP_ENV_GENERATION=7\n"
-    )
+    store.path().write_text("DELTA_MCP_ENV=india_devnet\nDELTA_MCP_ENV_GENERATION=7\n")
     connection = service(verified)
 
     selected = action(
@@ -393,6 +393,53 @@ def test_a_shared_environment_round_trip_invalidates_existing_approval() -> None
 
     assert approved.final_trading_check() is False
     assert connection.status(context("Codex"))["trading"]["enabled"] is False
+
+
+def test_failed_replacement_preserves_prior_consent_but_never_transfers_it(monkeypatch) -> None:
+    connection = service(verified)
+    connection.credentials.replace("india_prod", "old-key", "old-secret")
+    action(
+        connection,
+        "Codex",
+        "consent",
+        {"environment": "india_prod", "enabled": True, "acknowledged": True},
+    )
+    approved = asyncio.run(connection.access_state(context("Codex")))
+    assert approved.trading_enabled
+    metadata = connection.credentials._metadata
+    write = metadata.write
+    blocked = False
+
+    def fail_write(values):
+        if blocked:
+            raise MetadataError("metadata unavailable")
+        write(values)
+
+    def fail_activation(credential):
+        nonlocal blocked
+        connection._activate_credential(credential)
+        if credential and credential.revision == 2:
+            blocked = True
+            raise RuntimeError("activation failed")
+
+    monkeypatch.setattr(metadata, "write", fail_write)
+    with pytest.raises(CredentialStoreError):
+        connection.credentials.replace(
+            "india_prod", "candidate-key", "candidate-secret", activate=fail_activation
+        )
+    assert approved.final_trading_check()
+    assert connection.client.binding_config.api_key == "old-key"
+    blocked = False
+    recovered = asyncio.run(connection.access_state(context("Codex")))
+    assert recovered.credentials_ready
+    assert recovered.trading_enabled
+    connection.credentials.replace(
+        "india_prod", "reconnected-key", "reconnected-secret"
+    )
+    reconnected = asyncio.run(connection.access_state(context("Codex")))
+    assert reconnected.credentials_ready
+    assert not reconnected.trading_enabled
+    assert_place_order_blocked(monkeypatch, connection, approved.final_trading_check)
 
 
 def test_a_final_check_rejects_environment_changes_during_credential_resolution(
@@ -1316,7 +1363,7 @@ async def test_store_open_failure_keeps_public_tools_available(
     assert app.connection_service.credentials.source is CredentialSource.MEMORY
 
 
-def test_missing_secret_record_disables_account_access_but_allows_disconnect() -> None:
+def test_missing_secret_record_requires_reconnect_and_allows_disconnect() -> None:
     backend = MemorySecretBackend()
     credentials = CredentialStore(
         backend,
@@ -1352,7 +1399,8 @@ def test_missing_secret_record_disables_account_access_but_allows_disconnect() -
 
     assert status["credentials_configured"] is False
     assert status["account_tools_available"] is False
-    assert status["connection_error"] == "credential_store_unavailable"
-    assert environment["credential_metadata_present"] is True
-    assert environment["validation_state"] == "unavailable"
-    assert disconnected.content["status"] == "disconnected"
+    assert status["connection_error"] == ""
+    assert environment["credential_metadata_present"] is False
+    assert environment["reconnect_required"] is True
+    assert environment["validation_state"] == "not_connected"
+    assert disconnected.content["status"] == "not_connected"

@@ -7,7 +7,6 @@ from delta_exchange_mcp.auth import backend as auth_backend
 from delta_exchange_mcp.auth import store as auth_store
 from delta_exchange_mcp.auth.backend import (
     BackendOperationError,
-    CredentialCorruptError,
     CredentialState,
     CredentialStoreError,
     FileMetadata,
@@ -231,13 +230,15 @@ def test_old_record_delete_failure_rolls_the_rotation_back(tmp_path):
     assert set(backend.values) == {record_name(credentials, 1)}
 
 
-def test_activation_runs_after_publication_and_before_old_record_retirement(tmp_path):
+def test_activation_keeps_the_candidate_pending_until_commit(tmp_path):
     credentials, backend = make_store(tmp_path)
     first = credentials.replace("india_prod", "old-key", "old-secret")
     observed: list[int | None] = []
 
     def activate(credential):
-        assert credentials.metadata("india_prod").revision == 2
+        metadata = credentials.metadata("india_prod")
+        assert metadata.revision == 1
+        assert metadata.pending_revisions == (2,)
         assert set(backend.values) == {
             record_name(credentials, 1),
             record_name(credentials, 2),
@@ -282,6 +283,58 @@ def test_activation_failure_restores_metadata_and_removes_the_new_record(tmp_pat
     assert set(backend.values) == {record_name(credentials, 1)}
 
 
+@pytest.mark.parametrize("persistent", [False, True])
+@pytest.mark.parametrize(
+    ("failure", "has_previous"),
+    [("activation", False), ("activation", True), ("retirement", True)],
+)
+def test_rollback_continues_when_metadata_cannot_be_restored(
+    tmp_path, monkeypatch, persistent, failure, has_previous
+):
+    credentials, backend = make_store(tmp_path)
+    first = (
+        credentials.replace("india_prod", "old-key", "old-secret")
+        if has_previous
+        else None
+    )
+    candidate_revision = 2 if has_previous else 1
+    previous_records = {record_name(credentials, 1)} if has_previous else set()
+    metadata = credentials._metadata
+    write = metadata.write
+    writes_blocked = False
+    observed = []
+
+    def fail_write(values):
+        nonlocal writes_blocked
+        if writes_blocked:
+            writes_blocked = persistent
+            raise auth_store.MetadataError("metadata write failed")
+        write(values)
+
+    def activate(credential):
+        nonlocal writes_blocked
+        observed.append(credential.revision if credential else None)
+        if credential and credential.revision == candidate_revision:
+            writes_blocked = True
+            if failure == "activation":
+                raise RuntimeError("rebind failed")
+            backend.fail_delete.add(record_name(credentials, 1))
+
+    monkeypatch.setattr(metadata, "write", fail_write)
+    with pytest.raises(CredentialStoreError):
+        credentials.replace("india_prod", "new-key", "new-secret", activate=activate)
+
+    assert observed == [candidate_revision, first.revision if first else None]
+    assert set(backend.values) == previous_records
+    assert credentials.get("india_prod") == first
+    restarted = CredentialStore(
+        backend, FileMetadata(tmp_path / "credentials.json"), CredentialSource.OS_STORE
+    )
+    assert restarted.get("india_prod") == first
+    assert restarted.metadata("india_prod").pending_revisions == ()
+    assert set(backend.values) == previous_records
+
+
 def test_retirement_failure_restores_a_record_deleted_before_the_error(tmp_path):
     credentials, backend = make_store(tmp_path)
     first = credentials.replace("india_prod", "old-key", "old-secret")
@@ -303,6 +356,119 @@ def test_retirement_failure_restores_a_record_deleted_before_the_error(tmp_path)
     assert observed == [2, 1]
     assert credentials.get("india_prod") == first
     assert set(backend.values) == {record_name(credentials, 1)}
+
+
+@pytest.mark.parametrize(
+    ("failure", "has_previous"),
+    [("activation", False), ("activation", True), ("retirement", True)],
+)
+def test_rejected_candidate_stays_inactive_when_rollback_and_cleanup_fail(
+    tmp_path, monkeypatch, failure, has_previous
+):
+    credentials, backend = make_store(tmp_path)
+    first = (
+        credentials.replace("india_prod", "old-key", "old-secret")
+        if has_previous
+        else None
+    )
+    candidate_revision = 2 if has_previous else 1
+    candidate_name = record_name(credentials, candidate_revision)
+    write = credentials._metadata.write
+    delete = backend.delete
+    blocked = False
+
+    def fail_write(values):
+        if blocked:
+            raise auth_store.MetadataError("metadata unavailable")
+        write(values)
+
+    def fail_delete(name):
+        if blocked and name == candidate_name:
+            raise BackendOperationError("candidate cleanup unavailable")
+        delete(name)
+
+    def activate(credential):
+        nonlocal blocked
+        if credential is not None and credential.revision == candidate_revision:
+            blocked = True
+            if failure == "activation":
+                raise RuntimeError("activation failed")
+            backend.fail_delete.add(record_name(credentials, 1))
+
+    monkeypatch.setattr(credentials._metadata, "write", fail_write)
+    monkeypatch.setattr(backend, "delete", fail_delete)
+    with pytest.raises(CredentialStoreError):
+        credentials.replace(
+            "india_prod", "rejected-key", "rejected-secret", activate=activate
+        )
+
+    restarted = CredentialStore(
+        backend, FileMetadata(tmp_path / "credentials.json"), CredentialSource.OS_STORE
+    )
+    assert candidate_name in backend.values
+    assert restarted.get("india_prod") == first
+    assert restarted.metadata("india_prod").pending_revisions == (candidate_revision,)
+    blocked = False
+    assert restarted.get("india_prod") == first
+    assert candidate_name not in backend.values
+
+
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_commit_failure_restores_the_prior_live_and_durable_credential(
+    tmp_path, monkeypatch, has_previous
+):
+    credentials, backend = make_store(tmp_path)
+    first = (
+        credentials.replace("india_prod", "old-key", "old-secret")
+        if has_previous
+        else None
+    )
+    candidate_revision = 2 if has_previous else 1
+    write = credentials._metadata.write
+    observed = []
+
+    def fail_commit(values):
+        if (
+            values.get("india_prod", auth_store.EnvironmentState()).active_revision
+            == candidate_revision
+        ):
+            raise auth_store.MetadataError("commit failed")
+        write(values)
+
+    monkeypatch.setattr(credentials._metadata, "write", fail_commit)
+    with pytest.raises(auth_store.MetadataError, match="commit failed"):
+        credentials.replace(
+            "india_prod", "rejected-key", "rejected-secret", activate=observed.append
+        )
+    assert observed[-1] == first
+    restarted = CredentialStore(
+        backend, FileMetadata(tmp_path / "credentials.json"), CredentialSource.OS_STORE
+    )
+    assert restarted.get("india_prod") == first
+    assert set(backend.values) == ({record_name(credentials, 1)} if first else set())
+
+
+@pytest.mark.parametrize("failure", ["activation", "retirement"])
+def test_process_death_before_commit_never_activates_the_candidate(tmp_path, failure):
+    credentials, backend = make_store(tmp_path)
+    first = credentials.replace("india_prod", "old-key", "old-secret")
+
+    def activate(credential):
+        if failure == "activation":
+            raise SimulatedProcessDeath
+        backend.crash_delete_after.add(record_name(credentials, 1))
+
+    with pytest.raises(SimulatedProcessDeath):
+        credentials.replace(
+            "india_prod", "rejected-key", "rejected-secret", activate=activate
+        )
+    restarted = CredentialStore(
+        backend, FileMetadata(tmp_path / "credentials.json"), CredentialSource.OS_STORE
+    )
+    assert restarted.get("india_prod") == (first if failure == "activation" else None)
+    assert restarted.metadata("india_prod").reconnect_required == (
+        failure == "retirement"
+    )
 
 
 def test_delete_advances_the_generation_and_leaves_a_tombstone(tmp_path):
@@ -512,31 +678,56 @@ def test_expected_revision_serializes_concurrent_rotations(tmp_path):
     assert credentials.metadata("india_prod").generation == 2
 
 
-def test_missing_keyring_record_is_reported_as_corrupt_metadata(tmp_path):
+@pytest.mark.parametrize("record", [None, "invalid-json"])
+def test_missing_or_malformed_keyring_record_requires_reconnect(tmp_path, record):
     credentials, backend = make_store(tmp_path)
-    credentials.replace("india_prod", "key", "secret")
-    backend.values.clear()
+    saved = credentials.replace("india_prod", "key", "secret")
+    if record is None:
+        backend.values.clear()
+    else:
+        backend.values[record_name(credentials, 1)] = record
 
-    with pytest.raises(CredentialCorruptError, match="missing revision 1"):
+    assert credentials.get("india_prod") is None
+    recovered = credentials.metadata("india_prod")
+    assert recovered.reconnect_required
+    assert recovered.generation > saved.generation
+    assert recovered.revision is None
+    assert credentials.get("india_prod") is None
+    assert credentials.metadata("india_prod").generation == recovered.generation
+
+
+def test_backend_read_failure_does_not_detach_the_active_record(tmp_path):
+    credentials, backend = make_store(tmp_path)
+    saved = credentials.replace("india_prod", "key", "secret")
+    backend.fail_get.add(record_name(credentials, 1))
+
+    with pytest.raises(BackendOperationError, match="read failed"):
         credentials.get("india_prod")
+    assert credentials.metadata("india_prod").revision == saved.revision
+    assert credentials.metadata("india_prod").generation == saved.generation
+    assert not credentials.metadata("india_prod").reconnect_required
 
 
-def test_disconnect_repairs_metadata_for_an_already_missing_keyring_record(tmp_path):
+def test_disconnect_rejects_the_generation_before_missing_record_recovery(tmp_path):
     credentials, backend = make_store(tmp_path)
     saved = credentials.replace("india_prod", "key", "secret")
     backend.values.clear()
 
-    deleted = credentials.delete(
-        "india_prod",
-        expected_revision=saved.revision,
-        expected_generation=saved.generation,
-    )
+    with pytest.raises(CredentialConflictError):
+        credentials.delete(
+            "india_prod",
+            expected_revision=saved.revision,
+            expected_generation=saved.generation,
+        )
 
-    assert deleted is True
     assert credentials.get("india_prod") is None
     metadata = credentials.metadata("india_prod")
     assert (metadata.revision, metadata.generation) == (None, 2)
     assert metadata.pending_revisions == ()
+    assert (
+        credentials.delete("india_prod", expected_generation=metadata.generation)
+        is False
+    )
 
 
 def test_process_credentials_remain_external_and_have_no_persistent_revision(tmp_path):
