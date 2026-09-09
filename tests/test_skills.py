@@ -8,18 +8,10 @@ from jsonschema import validate
 from mcp.client import Client
 from mcp.types import TextContent
 
-from delta_exchange_mcp import config as config_mod
 from delta_exchange_mcp import skills
+from delta_exchange_mcp.auth.store import CredentialState
 from delta_exchange_mcp.server import build_server
-
-
-def _cfg(**over):
-    base = {"env": "india_prod", "base_url": config_mod.INDIA_PROD_REST}
-    return config_mod.Config(**{**base, **over})
-
-
-PUBLIC_CFG = _cfg()
-AUTH_CFG = _cfg(api_key="k", api_secret="s")
+from tests.connection_support import service, verified
 
 
 # --- frontmatter parsing -------------------------------------------------
@@ -104,37 +96,36 @@ def test_position_risk_uses_delta_for_option_direction() -> None:
 
 
 @pytest.fixture
-async def app():
-    server = build_server(PUBLIC_CFG)
+async def app(monkeypatch):
+    monkeypatch.delenv("DELTA_API_KEY", raising=False)
+    monkeypatch.delenv("DELTA_API_SECRET", raising=False)
+    server = build_server(connection_service=service(verified))
     try:
         yield server
     finally:
         await server.close_live_client()
 
 
-@pytest.fixture
-async def client(app):
-    async with Client(app, mode="auto") as session:
-        yield session
 
 
-async def test_funding_procedure_call_satisfies_the_tool_schema(client):
-    skill = next(item for item in skills.discover() if item.name == "funding-carry")
-    example = re.search(r"`(get_funding_history\([^`]+\))`", skill.body)
-    assert example is not None
-    call = ast.parse(example.group(1), mode="eval").body
-    assert isinstance(call, ast.Call)
-    assert not call.args
-    end = 1_789_000_000
-    values = {"symbol": "BTCUSD", "start": end - 604800, "end": end}
-    arguments = {
-        keyword.arg: values[keyword.value.id]
-        if isinstance(keyword.value, ast.Name)
-        else ast.literal_eval(keyword.value)
-        for keyword in call.keywords
-    }
-    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-    validate(arguments, tools["get_funding_history"].input_schema)
+async def test_funding_procedure_call_satisfies_the_tool_schema(app):
+    async with Client(app, mode="auto") as client:
+        skill = next(item for item in skills.discover() if item.name == "funding-carry")
+        example = re.search(r"`(get_funding_history\([^`]+\))`", skill.body)
+        assert example is not None
+        call = ast.parse(example.group(1), mode="eval").body
+        assert isinstance(call, ast.Call)
+        assert not call.args
+        end = 1_789_000_000
+        values = {"symbol": "BTCUSD", "start": end - 604800, "end": end}
+        arguments = {
+            keyword.arg: values[keyword.value.id]
+            if isinstance(keyword.value, ast.Name)
+            else ast.literal_eval(keyword.value)
+            for keyword in call.keywords
+        }
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        validate(arguments, tools["get_funding_history"].input_schema)
 
 
 def test_at_least_one_skill_needs_no_credentials():
@@ -162,77 +153,93 @@ async def test_every_skill_and_supporting_file_is_readable_without_keys(app, mod
                 assert result.contents[0].text == text
 
 
-async def test_each_skill_has_a_usable_prompt_without_keys(client):
-    names = {prompt.name for prompt in (await client.list_prompts()).prompts}
-    assert names == {skill.prompt_name for skill in skills.discover()}
-    assert all("-" not in name for name in names)
-    for skill in skills.discover():
-        result = await client.get_prompt(skill.prompt_name)
-        assert skill.name in result.messages[0].content.text
-        assert "get_skill" in result.messages[0].content.text
+async def test_each_skill_has_a_usable_prompt_without_keys(app):
+    async with Client(app, mode="auto") as client:
+        names = {prompt.name for prompt in (await client.list_prompts()).prompts}
+        assert names == {skill.prompt_name for skill in skills.discover()}
+        assert all("-" not in name for name in names)
+        for skill in skills.discover():
+            result = await client.get_prompt(skill.prompt_name)
+            assert skill.name in result.messages[0].content.text
+            assert "get_skill" in result.messages[0].content.text
 
 
-async def test_skill_tools_are_read_only_and_local(client):
-    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-    for name in ("list_skills", "get_skill"):
-        assert tools[name].annotations.read_only_hint is True
-        assert tools[name].annotations.open_world_hint is False
+async def test_skill_tools_are_read_only_and_local(app):
+    async with Client(app, mode="auto") as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        for name in ("list_skills", "get_skill"):
+            assert tools[name].annotations.read_only_hint is True
+            assert tools[name].annotations.open_world_hint is False
 
 
-async def test_get_skill_returns_every_procedure_without_keys(client):
-    for skill in skills.discover():
-        result = await client.call_tool("get_skill", {"name": skill.name})
-        assert not result.is_error
-        assert result.content == [TextContent(type="text", text=skill.body)]
+async def test_get_skill_returns_every_procedure_without_keys(app):
+    async with Client(app, mode="auto") as client:
+        for skill in skills.discover():
+            result = await client.call_tool("get_skill", {"name": skill.name})
+            assert not result.is_error
+            assert result.content == [TextContent(type="text", text=skill.body)]
 
 
-async def test_get_skill_rejects_unknown_name(client):
-    result = await client.call_tool("get_skill", {"name": "no-such-skill"})
-    assert result.is_error
-    assert "unknown skill" in result.content[0].text
+async def test_get_skill_rejects_unknown_name(app):
+    async with Client(app, mode="auto") as client:
+        result = await client.call_tool("get_skill", {"name": "no-such-skill"})
+        assert result.is_error
+        assert "unknown skill" in result.content[0].text
 
 
 @pytest.mark.parametrize(
     "path", ["../../config.py", "/etc/passwd", "references/../../server.py"]
 )
-async def test_get_skill_rejects_traversal_path(client, path):
-    first = skills.discover()[0]
-    result = await client.call_tool("get_skill", {"name": first.name, "path": path})
-    assert result.is_error
-    assert "has no file" in result.content[0].text
+async def test_get_skill_rejects_traversal_path(app, path):
+    async with Client(app, mode="auto") as client:
+        first = skills.discover()[0]
+        result = await client.call_tool("get_skill", {"name": first.name, "path": path})
+        assert result.is_error
+        assert "has no file" in result.content[0].text
 
 
-async def test_list_skills_includes_the_requirement_for_each_procedure(client):
-    result = await client.call_tool("list_skills", {})
-    listed = result.structured_content["skills"]
-    assert {item["name"] for item in listed} == {item.name for item in skills.discover()}
-    for entry in listed:
-        assert entry["uri"].startswith(skills.URI_PREFIX)
-        expected = next(skill for skill in skills.discover() if skill.name == entry["name"])
-        assert entry["requires"] == expected.requires
+async def test_list_skills_includes_the_requirement_for_each_procedure(app):
+    async with Client(app, mode="auto") as client:
+        result = await client.call_tool("list_skills", {})
+        listed = result.structured_content["skills"]
+        assert {item["name"] for item in listed} == {item.name for item in skills.discover()}
+        for entry in listed:
+            assert entry["uri"].startswith(skills.URI_PREFIX)
+            expected = next(skill for skill in skills.discover() if skill.name == entry["name"])
+            assert entry["requires"] == expected.requires
 
 
-async def test_supporting_files_are_reachable_by_tool(client):
-    for skill in skills.discover():
-        for path, text in skill.files.items():
-            result = await client.call_tool("get_skill", {"name": skill.name, "path": path})
-            assert not result.is_error
-            assert result.content == [TextContent(type="text", text=text)]
+async def test_supporting_files_are_reachable_by_tool(app):
+    async with Client(app, mode="auto") as client:
+        for skill in skills.discover():
+            for path, text in skill.files.items():
+                result = await client.call_tool("get_skill", {"name": skill.name, "path": path})
+                assert not result.is_error
+                assert result.content == [TextContent(type="text", text=text)]
 
 
-async def test_account_setup_does_not_change_the_skill_catalog(app, client):
-    async def catalog() -> tuple[set[str], set[str], dict[str, object]]:
-        resources = await client.list_resources(cache_mode="refresh")
-        prompts = await client.list_prompts(cache_mode="refresh")
-        listed = await client.call_tool("list_skills", {})
-        return (
-            {str(resource.uri) for resource in resources.resources},
-            {prompt.name for prompt in prompts.prompts},
-            listed.structured_content,
+async def test_account_setup_does_not_change_the_skill_catalog(app):
+    async with Client(app, mode="auto") as client:
+        async def catalog() -> tuple[set[str], set[str], dict[str, object]]:
+            resources = await client.list_resources(cache_mode="refresh")
+            prompts = await client.list_prompts(cache_mode="refresh")
+            listed = await client.call_tool("list_skills", {})
+            return (
+                {str(resource.uri) for resource in resources.resources},
+                {prompt.name for prompt in prompts.prompts},
+                listed.structured_content,
+            )
+
+        before = await catalog()
+        connection = app.connection_service
+        environment = connection.client.config.env
+        connection.credentials.replace(
+            environment, "test-key", "test-secret", state=CredentialState.VERIFIED
         )
-
-    before = await catalog()
-    app.live_client.rebind(AUTH_CFG)
-    assert await catalog() == before
-    app.live_client.rebind(PUBLIC_CFG)
-    assert await catalog() == before
+        connected = await client.call_tool("get_connection_status", {})
+        assert connected.structured_content["credentials_configured"] is True
+        assert await catalog() == before
+        connection.credentials.delete(environment)
+        disconnected = await client.call_tool("get_connection_status", {})
+        assert disconnected.structured_content["credentials_configured"] is False
+        assert await catalog() == before

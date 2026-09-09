@@ -20,8 +20,8 @@ from importlib import resources
 from importlib.resources.abc import Traversable
 
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.resources import FunctionResource
-from pydantic import AnyUrl
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.resources import TextResource
 
 from delta_exchange_mcp import hints
 
@@ -140,14 +140,12 @@ def _add_resource(
     mcp: MCPServer, uri: str, name: str, description: str, text: str
 ) -> None:
     mcp.add_resource(
-        FunctionResource(
-            uri=AnyUrl(uri),
+        TextResource(
+            uri=uri,
             name=name,
             description=description,
             mime_type=_mime_for(uri),
-            # Default-argument capture: a bare closure over the loop variable
-            # would give every resource the last skill's text.
-            fn=lambda captured=text: captured,
+            text=text,
         )
     )
 
@@ -200,14 +198,14 @@ def register(mcp: MCPServer) -> Catalog:
         """
         skill = catalog.get(name)
         if skill is None:
-            raise ValueError(
+            raise ToolError(
                 f"unknown skill {name!r}; available: "
                 f"{sorted(s.name for s in catalog.shipped) or 'none'}"
             )
         if path is None:
             return skill.body
         if path not in skill.files:
-            raise ValueError(
+            raise ToolError(
                 f"{name!r} has no file {path!r}; available: {sorted(skill.files) or 'none'}"
             )
         return skill.files[path]
