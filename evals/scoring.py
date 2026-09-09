@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
+from jsonschema.validators import validator_for
 from mcp.types import CallToolResult, TextContent
 
 from evals.agent import ToolCall, Transcript, TurnRecord
@@ -68,6 +69,10 @@ def _fmt(exp: Expect) -> str:
 
 def check(case: Case, transcript: Transcript) -> tuple[bool, list[str]]:
     failures: list[str] = []
+    validators = {
+        tool.name: validator_for(tool.input_schema)(tool.input_schema)
+        for tool in transcript.available_tools
+    }
 
     if len(transcript.turns) != len(case.turns):
         failures.append(
@@ -83,12 +88,32 @@ def check(case: Case, transcript: Transcript) -> tuple[bool, list[str]]:
         if actual_turn.prompt != expected_turn.prompt:
             failures.append(f"turn {number}: transcript prompt does not match the case")
 
+        invalid: set[int] = set()
+        for call_index, call in enumerate(actual_turn.calls):
+            validator = validators.get(call.name)
+            if validator is None:
+                invalid.add(call_index)
+                failures.append(f"turn {number}: tool was not advertised: {call.name}")
+                continue
+            for error in validator.iter_errors(call.args):
+                invalid.add(call_index)
+                path = (
+                    ".".join(str(part) for part in error.absolute_path) or "arguments"
+                )
+                failures.append(
+                    f"turn {number}: invalid {call.name} {path}: {error.message}"
+                )
+
         matched: set[int] = set()
         cursor = 0
         for exp in expected_turn.expect:
             for call_index in range(cursor, len(actual_turn.calls)):
                 call = actual_turn.calls[call_index]
-                if call.name == exp.name and _args_match(exp.args, call.args):
+                if (
+                    call_index not in invalid
+                    and call.name == exp.name
+                    and _args_match(exp.args, call.args)
+                ):
                     matched.add(call_index)
                     cursor = call_index + 1
                     break
@@ -102,9 +127,7 @@ def check(case: Case, transcript: Transcript) -> tuple[bool, list[str]]:
                 )
 
         expected_reads = {
-            exp.name
-            for exp in expected_turn.expect
-            if exp.name not in MUTATING_TOOLS
+            exp.name for exp in expected_turn.expect if exp.name not in MUTATING_TOOLS
         }
         permitted_reads = expected_reads | expected_turn.allowed_reads
         for call_index, call in enumerate(actual_turn.calls):
